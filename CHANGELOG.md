@@ -4,6 +4,45 @@
 
 ## v1.x
 
+- **v1.8.0** — **阶跃星辰 Step Plan 订阅套餐用量** + **状态条不再向上偏移**。
+
+  **① 阶跃星辰：余额之外，把 Step Plan 订阅套餐用量也显示出来。**
+  阶跃星辰在按量计费余额（`/v1/accounts`）之外另有订阅套餐，余额接口看不到套餐用量，
+  套餐数据来自专用接口 `GET https://api.stepfun.com/step_plan/v1/usage`
+  （`Authorization: Bearer <key>`，响应顶层 `schema_version`/`scope`，主体是
+  `windows[]`（5 小时窗口、周配额等限流窗口）+ `credit_buckets[]`（订阅额度 / 加油包额度）；
+  接口语义与字段名参照 stepcode 客户端 `extensions/lib/api.ts` 的 `fetchPlanUsage`）。
+  - 状态条：余额后面追加一段「用 11.22M 剩 22.33%」（与 stepcode 同一口径：**两位小数**、不带「套餐」前缀；窗口族没有 M 总量就只显示「剩 22.33%」），颜色沿用余额那把尺子（剩余 > 安全阈值绿、> 预警阈值黄、否则红）。
+  - 看板详情：新增一张 Step Plan 卡，每个窗口 / 额度桶一行（名字 + 进度条 + 剩余% + 额度 + 重置 / 到期时间）。
+  - 设置：新增「状态条显示套餐用量」开关（默认开）；关掉后看板详情里仍能看全量数据。
+  - 自定义中转站同样生效：只要 baseURL 指向 `api.stepfun.com`，会并发查套餐接口，不额外占一次轮询。
+  - ⚠️ **红线照旧**：接口没回百分比时只显示「用 11.22M」或「—」，**不拿 0 冒充「已用 0%」、也不把「查不到」显示成「不限量」**；M 数先 half-up（`roundHalfUp2`）再 `toFixed` —— `(2.675).toFixed(2)` 是 `"2.67"`（2.675 存成 2.67499999…），直接 toFixed 显示值会和手算对不上；
+    没套餐（`kind:"none"`）/ 查不了（`kind:"unavailable"`）时状态条**不占位**，只在看板里说明原因。
+  - 百分比精度只由**显示层**砍：服务端 `stepfunLeft` 给全精度，客户端 `planPct2` 先 `roundHalfUp2` 再 `toFixed`。
+    真机案例：接口 `used_percent = 2.36` → 剩余 97.64%，第一版服务端就 `Math.round(x*10)/10` 砍成 97.6，
+    状态条显示「剩 97.60%」，与阶跃控制台手算对不上。回归钉子：`test/test-v180-plan-ui.mjs` 的 A8
+    （97.64 → `"97.64"`、99.115 → `"99.12"`、2.675 → `"2.68"`）与 `test/test-stepfun-plan.mjs` 的 P5/P6（全精度 99.11333…）。
+
+  **② 状态条相对同排组件「向上偏移」——三次真机截图，定稿是「负 margin 归零 + 去掉平台 logo + 高度对齐 22px」三件事一起做。**
+  两层根因都在宿主 CSS 里实证过（`app.asar`：`.Q7WfXG_dock{justify-content:center;align-items:center;gap:12px;padding-top:4px;display:flex}` —— **单行、不换行**；同排统计药丸 `.K-8v-a_anchor{font-size:12px;line-height:20px}` + `.K-8v-a_pill{padding:1px 8px}`，总高 22px）：
+  - **负 `margin-top`**：`-12px`（v1.6.x 为消空白留下的）约等于 dock 的行间距，`-4px` 也仍是在把胶囊往上拽。dock 是 `align-items:center` 的单行 flex，本插件胶囊与宿主药丸**排在同一条行里**，只要 margin-top 是负的，胶囊就被整体上提 → 上沿顶到输入框、下沿却与别人齐平（维护者原话「上半部分还是紧贴着输入框」「向下倒是感觉好像和其他组件对齐了」）。→ **归零**（`margin:0 auto 0`）。
+  - **16px 平台 logo**：是胶囊高度的主要推手，比同排药丸高出一截。→ 状态条**不再渲染 logo**（平台名本身就是标识，三色状态点也保留；看板卡片里的 logo 照旧显示，那边有空间）。维护者原话「是不是图标搞的鬼, 如果是就把图标去掉（所有模型提供商的图标都去掉, 或者是把图标显示尺寸缩小一点和这一排字体一样）」。
+  - **`min-height:28px`**：那是 v1.4.1 冷启动 LayoutShift 的旧钉子，比宿主药丸高 6px。→ 改 **22px**（= 药丸实测总高：line-height 20px + 1px 上下 padding），`box-sizing:border-box` 不变，仍用 `min-height` 不用 `height`（系统字体放大时不裁字）。
+  ⚠️ v1.6.6 的「状态条独占一行」方案（`[data-slot="conversation.composer.dock"] > [data-composer-stats]{flex:0 0 100%}`）在当前宿主里**已经失效** —— `data-composer-stats` 这个属性名在 DSH NEXT 的 `app.asar` 里不存在（现在是单数 `data-composer-stat`）。别把它当对齐手段再捡回来，它与对齐无关。
+
+  **③ 状态条末尾「本会话消耗」尾巴改成开关，默认关。**
+  维护者原话「最后面显示的 ~￥33.07 这个尾巴, 鼠标放上去会显示 本轮会话消耗 ￥33.07 这个组件删除掉, 要不然就是配置成一个开关」。取后者而不是真删：会话消耗是本插件的核心投影能力，看板详情里一直在，留个开关给习惯在状态条瞟一眼的人。设置里新增「状态条显示本会话消耗」（**默认关**，与「状态条显示套餐用量」的默认开相反），点开即生效、即落盘，不需要再按「保存并生效」。
+
+  **回归钉子**：新增 `test/test-stepfun-plan.mjs`（53 条，服务端解析全分支）
+  与 `test/test-v180-plan-ui.mjs`（状态条 chip / 两位小数 / 档位 / 开关 / 详情卡 / 中英文案成对，
+  含「roundHalfUp2 vs toFixed」与「窗口族无 usedM 不得补 0.00M」两条；v1.8.0 又补 B5~B7 尾巴开关渲染
+  与 F1~F4 开关接线共 8 条）；
+  `test/test-bar.mjs` 的高度断言从 `min-height:28px` 改为 **22px**，并新增「状态条不渲染 logo / 看板卡片仍渲染 /
+  尾巴由 `showSessionCost` 把着 / 默认值取 false」四条；
+  `test/test-v170-ui-fixes.mjs` 的 margin 断言改为**钉 `margin:0 auto 0` 并反向禁止任何负 margin-top**，
+  另加 `showSessionCost` 开关落盘两条。
+
+
 - **v1.7.0** — **DSH 0.2.0 适配、更新保护、界面与设置保存修复、新模型补录**。
 
   - 扩展 DSH / credentials 声明到 0.2.0-rc.2；实际运行验收为 Android DSHA Web + Node24，旧系列仍保留范围而不宣称完整实测。

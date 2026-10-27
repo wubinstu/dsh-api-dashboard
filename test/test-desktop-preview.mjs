@@ -12,14 +12,17 @@
 // 注: 手机端行为不变的保证方式是「断点只在 >=768px 生效」, 这一点由 ② 的媒体查询条件钉住。
 const fs = await import('node:fs')
 const path = await import('node:path')
+const { fileURLToPath } = await import('node:url')
 const { readFileSync } = fs
 let pass = 0, fail = 0
 const a = (name, cond, extra) => { if (cond) { pass++ } else { fail++; console.log('FAIL ' + name + (extra ? '  ' + extra : '')) } }
 
-const ROOT = path.resolve(new URL('..', import.meta.url).pathname)
-const src = readFileSync(path.join(ROOT, 'src/index.js'), 'utf8')
-const cli = readFileSync(path.join(ROOT, 'client/client.js'), 'utf8')
-const sh = readFileSync(path.join(ROOT, 'install.sh'), 'utf8')
+const ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
+// git 里是 LF, Windows 工作区被 core.autocrlf=true 检出成 CRLF —— 跨行正则按 LF 归一化再断言
+const lf = (s) => s.replace(/\r\n/g, '\n')
+const src = lf(readFileSync(path.join(ROOT, 'src/index.js'), 'utf8'))
+const cli = lf(readFileSync(path.join(ROOT, 'client/client.js'), 'utf8'))
+const sh = lf(readFileSync(path.join(ROOT, 'install.sh'), 'utf8'))
 const pkg = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
 const lock = JSON.parse(readFileSync(path.join(ROOT, 'package-lock.json'), 'utf8'))
 
@@ -379,7 +382,7 @@ a('install.sh 会提示这是预发行分支',
 // ==========================================================================
 // ⑥ 预发行 tag 不许把预览版发到 npm (否则 latest 会被预览版顶掉)
 // ==========================================================================
-const wf = readFileSync(path.join(ROOT, '.github/workflows/publish.yml'), 'utf8')
+const wf = lf(readFileSync(path.join(ROOT, '.github/workflows/publish.yml'), 'utf8'))
 a('publish.yml 有预发行守卫步骤', /id:\s*prerelease_guard/.test(wf))
 a('publish.yml 的发布步骤挂了守卫条件',
   /- name:\s*发布到 npm\n\s*if:\s*steps\.prerelease_guard\.outputs\.skip != 'true'/.test(wf))

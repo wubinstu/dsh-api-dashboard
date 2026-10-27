@@ -5,10 +5,11 @@
 //   我们的实现当时是 new Audio(url) + HTTP, 三条全中, 故本轮把它换成 Web Audio。
 const fs = await import('node:fs')
 const path = await import('node:path')
+const { fileURLToPath } = await import('node:url')
 let pass = 0, fail = 0
 const a = (name, cond, extra) => { if (cond) { pass++ } else { fail++; console.log('FAIL ' + name + (extra ? '  ' + extra : '')) } }
 
-const ROOT = path.resolve(new URL('..', import.meta.url).pathname)
+const ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const src = fs.readFileSync(path.join(ROOT, 'src/index.js'), 'utf8')
 const cli = fs.readFileSync(path.join(ROOT, 'client/client.js'), 'utf8')
 const assetDir = path.join(ROOT, 'assets/whale')

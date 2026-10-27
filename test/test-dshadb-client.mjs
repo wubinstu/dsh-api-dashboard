@@ -42,7 +42,7 @@ globalThis.window.visualViewport = fakeVV
 let captured = null
 globalThis.window.__ModuleLoader__ = { load({factory}){ captured = factory((name)=>{ if(name==='react') return react; if(name==='@deepseek-ai/dsh-client-ui-primitives') return {}; throw new Error('未知依赖 '+name) }) } }
 
-let src = readFileSync(new URL('../client/client.js', import.meta.url).pathname, 'utf8')
+let src = readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
 const marker = '    exports.apply = apply;'
 if (!src.includes(marker)) throw new Error('找不到导出锚点')
 src = src.replace(marker, `    exports.__test = { formatMoney, formatSessionCost, getLevel, acquireWhaleWidget, releaseWhaleWidget, getWhaleRefs: () => whaleRefs, getWidget: () => whaleWidget, keyboardInset, installKeyboardInsetVar };

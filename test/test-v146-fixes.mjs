@@ -9,12 +9,16 @@
 // **抠出来实跑**的, 不是正则匹配。
 const fs = await import('node:fs')
 const path = await import('node:path')
+const { fileURLToPath } = await import('node:url')
 let pass = 0, fail = 0
 const a = (name, cond, extra) => { if (cond) { pass++ } else { fail++; console.log('FAIL ' + name + (extra ? '  ' + extra : '')) } }
 
-const ROOT = path.resolve(new URL('..', import.meta.url).pathname)
-const src = fs.readFileSync(path.join(ROOT, 'src/index.js'), 'utf8')
-const cli = fs.readFileSync(path.join(ROOT, 'client/client.js'), 'utf8')
+const ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
+// 本仓库在 git 里是 LF, 但 Windows 上 core.autocrlf=true 会把工作区检出成 CRLF ——
+// 断言里的 `\{\n\s+if \(` 这类「跨行」正则会因此假阴性。git 里存的是 LF, 所以按 LF 归一化再断言。
+const lf = (s) => s.replace(/\r\n/g, '\n')
+const src = lf(fs.readFileSync(path.join(ROOT, 'src/index.js'), 'utf8'))
+const cli = lf(fs.readFileSync(path.join(ROOT, 'client/client.js'), 'utf8'))
 
 /** 从 client.js 抠一个函数声明(按大括号配平), 只为在测试里实跑其逻辑。 */
 const grab = (name) => {

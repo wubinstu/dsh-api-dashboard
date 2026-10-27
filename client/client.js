@@ -281,10 +281,11 @@ window.__ModuleLoader__.load({
 /* v1.4.1: 定住高度下限 —— 空态(18px 内容)与有数据态(20px 内容)差 2px, 钱数/平台名一进来
    状态条就从 26px 变 28px, 把上面的会话区顶 2px(真机实测 CLS 0.00094+0.00053)。
    用 min-height 而不是 height: 系统字体放大时仍可自然增高, 不会裁字。
-   28px = 有数据态的实测总高(20px 内容 + 4px 上下 padding), 所以有数据时外观完全不变。 */
-.dshadb_bar{display:inline-flex;align-items:center;gap:5px;font-size:11px;min-height:28px;box-sizing:border-box;padding:4px 10px 4px 6px;border-radius:10px;background:var(--dshadb-panel,#f5f6f8);border:1px solid var(--dshadb-border,#e7e8ec);color:var(--dshadb-muted,#777b84);cursor:pointer;white-space:nowrap;user-select:none;-webkit-tap-highlight-color:transparent}
+   v1.8.0: 22px = 宿主 dock 同排统计药丸的实测总高(line-height 20px + 1px 上下 padding),
+   对齐它就不会在 align-items:center 的行里向上凸一截(维护者三次反馈「向上偏移」的根因)。
+   ⚠️ 想微调高度只改 min-height 这一个值; 别改回 28px, 也别配负 margin。 */
+.dshadb_bar{display:inline-flex;align-items:center;gap:5px;font-size:11px;min-height:22px;box-sizing:border-box;padding:1px 10px 1px 8px;border-radius:10px;background:var(--dshadb-panel,#f5f6f8);border:1px solid var(--dshadb-border,#e7e8ec);color:var(--dshadb-muted,#777b84);cursor:pointer;white-space:nowrap;user-select:none;-webkit-tap-highlight-color:transparent}
 .dshadb_bar:active{opacity:0.8}
-.dshadb_bar_logo{width:16px;height:16px;border-radius:5px;background:var(--dshadb-logo,#eef2ff);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;color:#4f7cff}
 .dshadb_bar_name{font-weight:700;color:var(--dshadb-text,#17181c);font-size:11px}
 .dshadb_bar_amount{font-weight:800;font-variant-numeric:tabular-nums;color:var(--dshadb-text,#17181c)}
 /* C-4a (v1.4.1): .dshadb_bar_ok/warn/err 以前只有使用处、没有 CSS 规则(死类名),
@@ -544,6 +545,27 @@ body:has(.dshadb_scrim) [class*="sidebarCol"]{border-right-color:transparent !im
 
 /* ===== 补缺失CSS ===== */
 .dshadb_bar_cost{display:inline-flex;align-items:center;margin-left:2px;padding-left:8px;border-left:1px solid var(--dshadb-border,#e7e8ec);color:var(--dshadb-secondary,#9ca0aa);font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap}
+/* v1.8.0: 状态条里的套餐余量小块 (阶跃星辰 Step Plan)。
+   与 .dshadb_bar_cost 同级别: 小号、nowrap、等宽数字 —— 它只是「余额之外的第二行信息」,
+   不引入新配色(ok/warn/err 复用 bar 那三个类), 也没有边框/背景, 绝不加宽胶囊的视觉重量。
+   ⚠️ 别给这里加 min-width/固定宽度: 窄屏上它必须是**最先被内容挤压**的那一段。 */
+.dshadb_bar_plan{display:inline-flex;align-items:center;margin-left:2px;padding-left:8px;border-left:1px solid var(--dshadb-border,#e7e8ec);font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap}
+/* v1.8.0: Step Plan 详情卡 (平台详情页)。进度条配色与状态条三色一致。 */
+.dshadb_plancard{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:12px;margin-top:7px;border:1px solid var(--dshadb-border,#e7e8ec);background:var(--dshadb-panel,#f5f6f8)}
+.dshadb_plancard_title{display:flex;align-items:baseline;justify-content:space-between;gap:8px;font-size:12.5px;font-weight:700;color:var(--dshadb-text,#17181c)}
+.dshadb_plancard_meta{font-size:10.5px;font-weight:400;color:var(--dshadb-secondary,#9ca0aa)}
+.dshadb_plancard_hint{font-size:10px;line-height:1.5;color:var(--dshadb-secondary,#9ca0aa)}
+.dshadb_planrow{display:flex;flex-direction:column;gap:4px}
+.dshadb_planrow_head{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.dshadb_planrow_label{font-size:11.5px;color:var(--dshadb-text,#17181c)}
+.dshadb_planrow_val{font-size:11.5px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--dshadb-text,#17181c)}
+.dshadb_planrow_sub{font-size:10px;color:var(--dshadb-secondary,#9ca0aa)}
+.dshadb_planbar{height:5px;border-radius:3px;background:var(--dshadb-border,#e7e8ec);overflow:hidden}
+.dshadb_planbar_fill{height:100%;border-radius:3px;transition:width .2s ease}
+.dshadb_planbar_fill.is_ok{background:#2e9e5b}
+.dshadb_planbar_fill.is_warn{background:#c8891a}
+.dshadb_planbar_fill.is_err{background:#d8443f}
+.dshadb_planbar_fill.is_unknown{background:#c7c7cc}
 /* ===== v1.4.0 子代理消耗行 =====
    设计约束: 无论几个子代理都**只占一行高度**(约 20px), 绝不换行挤压输入框。
    做法 = 固定 flex-wrap:nowrap + 横向滚动(隐藏滚动条) + 名字截断到 72px。
@@ -557,13 +579,15 @@ body:has(.dshadb_scrim) [class*="sidebarCol"]{border-right-color:transparent !im
 /* UI v1.4.1（按维护者反馈改）：**不再把两行塞进一个容器** —— 余额条恢复成独立的药丸，
    整块（余额条 + 子代理行）**水平居中**：wrap 用 fit-content + margin:auto，
    子项 align-items:center，于是窄的时候两行都居中，宽的时候 wrap 撑到 100% 子代理行在内部横滑。 */
-/* v1.6.4: 吃掉宿主 stack 给的那 6px gap。
-   状态条上面紧挨的是 DSH 自己的用量统计行(「1 轮 1 步 · 148 tok/s」那一行), 两行之间原本空一截
-   (维护者截图反馈「中间那个空白间隔有点多」)。间距来自宿主 composer stack 的
-  宿主变量 --dsh-composer-stack-gap(实测 6px), 改它会连带影响宿主自己的排版 ——
-   所以只把我们这一份退回去: 负 margin-top = -(6px) - 2px, 净留 2px 呼吸。
-   ⚠️ 想再紧/再松就只调这个值, 别动 28px 的 min-height(那是冷启动 LayoutShift 的钉子)。 */
-.dshadb_barwrap{display:flex;flex-direction:column;align-items:center;gap:0;width:fit-content;max-width:100%;min-width:0;margin:-12px auto 0}
+/* v1.8.0: margin-top 归零 —— 负 margin 是「状态条比同排组件高一截」的根因。
+   宿主 dock(DSH NEXT 实测)是 align-items:center + gap:12px + padding-top:4px 的 flex 行,
+   本插件的胶囊与宿主的统计药丸(data-composer-stat, 总高 22px)**排在同一条行里**。
+   只要 margin-top 是负的, 胶囊就被整体往上拽, 于是上沿顶到输入框、下沿却与别人齐平 ——
+   维护者两次截图反馈的都是这一件事(「稍微向上偏移」→「上半部分还是紧贴着输入框」)。
+   现在 margin-top:0, 与宿主药丸共用同一个垂直中心, 上沿自然留出 dock 的 padding-top。
+   ⚠️ 别再调回负值(-12/-8/-4px 都试过, 全是错位)。
+   ⚠️ 想让状态条独占一行是另一个议题(v1.6.6 的 flex:0 0 100% 方案), 与对齐无关, 别混着改。 */
+.dshadb_barwrap{display:flex;flex-direction:column;align-items:center;gap:0;width:fit-content;max-width:100%;min-width:0;margin:0 auto 0}
 .dshadb_barrow{display:inline-flex;align-items:center;gap:2px;max-width:100%;min-width:0}
 /* v1.6.5: 窄屏溢出兜底 —— 真机反馈「状态条右侧的本会话消耗只剩个 ~ 被屏幕边缘切住」。
    状态条整条是 nowrap 的 inline-flex 胶囊: 平台名 / 金额 / 峰谷 / 本会话消耗 四段全是
@@ -818,6 +842,27 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
       "valley.slogan": "夜猫子福利，错峰用 AI 物美价廉 ~",
       "weekend.slogan": "周末静静嗨，5 折用 DeepSeek 真香！",
       "error.timeout": "超时", "error.network": "网络错误", "error.unknown": "未知",
+      // v1.8.0: 阶跃星辰 Step Plan 订阅套餐 (服务端 summarizeStepfunPlan 的视图, 见 src/index.js)
+      // ⚠️ 文案里**不许出现具体额度数字的推断**: 接口没给的字段一律显示「—」, 不拿 0 冒充。
+      "plan.unlimited": "不限量",
+      "plan.title": "Step Plan 订阅套餐",
+      "plan.subtitle": "订阅套餐用量（阶跃星辰）",
+      "plan.left": "剩 {p}%", "plan.used": "已用 {p}%", "plan.usedM": "用 {n}M",
+      "plan.unlimitedLeft": "不限量",
+      "plan.fiveHour": "5 小时窗口", "plan.weekly": "周配额", "plan.monthly": "月度配额",
+      "plan.bucketTotal": "套餐总额度", "plan.bucketSub": "订阅额度", "plan.bucketTopup": "加油包额度",
+      "plan.window": "限流窗口", "plan.bucket": "额度桶",
+      "plan.remaining": "剩余", "plan.total": "总额",
+      "plan.credits": "{n}M credits",
+      "plan.resetAt": "{t} 重置", "plan.expiresAt": "{d} 到期",
+      "plan.none": "该 Key 暂无订阅套餐",
+      "plan.unavailable": "套餐用量暂不可查（{r}）",
+      "plan.partial": "部分套餐数据缺失，以下为已查到的部分",
+      "plan.hint": "阶跃星辰在按量计费余额之外另有订阅套餐，余额接口看不到套餐用量；这里的数据来自套餐专用接口。",
+      "settings.showPlan": "状态条显示套餐用量",
+      "settings.showPlanHint": "阶跃星辰等订阅套餐平台：在状态条余额后面追加一段套餐用量（如「用 11.22M 剩 22.33%」）。关掉后仍可在看板详情里查看。",
+      "settings.showCost": "状态条显示本会话消耗",
+      "settings.showCostHint": "在状态条末尾追加「~¥33.07」这段本会话消耗。默认关闭；关掉后看板详情里仍能看到完整的分模型/分币种消耗。",
     };
     const en = {
       "bar.hint": "Tap to switch", "title": "哦鲸鲸", "refresh": "Refresh", "refreshing": "Refreshing",
@@ -912,6 +957,26 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
       "valley.slogan": "Night-owl deal, use AI cheap at off-peak~",
       "weekend.slogan": "Weekend vibes, 50% off DeepSeek!",
       "error.timeout": "Timeout", "error.network": "Network error", "error.unknown": "Unknown",
+      // v1.8.0: Stepfun Step Plan (view produced by summarizeStepfunPlan, see src/index.js)
+      "plan.unlimited": "Unlimited",
+      "plan.title": "Step Plan subscription",
+      "plan.subtitle": "Subscription usage (Stepfun)",
+      "plan.left": "{p}% left", "plan.used": "{p}% used", "plan.usedM": "{n}M used",
+      "plan.unlimitedLeft": "Unlimited",
+      "plan.fiveHour": "5-hour window", "plan.weekly": "Weekly quota", "plan.monthly": "Monthly quota",
+      "plan.bucketTotal": "Total credits", "plan.bucketSub": "Subscription", "plan.bucketTopup": "Top-up pack",
+      "plan.window": "Rate window", "plan.bucket": "Credit bucket",
+      "plan.remaining": "Left", "plan.total": "Total",
+      "plan.credits": "{n}M credits",
+      "plan.resetAt": "resets {t}", "plan.expiresAt": "expires {d}",
+      "plan.none": "This key has no subscription plan",
+      "plan.unavailable": "Plan usage unavailable ({r})",
+      "plan.partial": "Some plan data is missing; showing what was retrieved",
+      "plan.hint": "Stepfun bills subscriptions separately from pay-as-you-go balance, which the balance API cannot see; this comes from the dedicated plan endpoint.",
+      "settings.showPlan": "Show plan usage in the bar",
+      "settings.showPlanHint": "For subscription platforms such as Stepfun: append plan usage (e.g. \"11.22M used, 22.33% left\") after the balance in the bar. Dashboard details stay available either way.",
+      "settings.showCost": "Show this session's cost in the bar",
+      "settings.showCostHint": "Append \"~$4.63\" (this session's cost) at the end of the bar. Off by default; the dashboard still shows the full per-model / per-currency breakdown either way.",
     };
     //#endregion
 
@@ -1263,6 +1328,89 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
       if (current.status === "local") return t("status.local");
       return t("status.err");
     }
+    // ===== v1.8.0: Step Plan 订阅套餐 (阶跃星辰) =====
+    // 入参是服务端 summarizeStepfunPlan 的视图 (balance.planView), **不是**原始接口响应 ——
+    // 字段不认识 / 没套餐 / 查不了时服务端根本不下发 planView, 这里一律返回 null,
+    // 调用方据此不渲染 (红线: 不拿 0 冒充「已用 0%」)。
+    /** 百分比取整显示: 0.5 这类小数也如实四舍五入, null → null (档位判定用, 显示走 planPct2) */
+    function planPct(v) { return typeof v === "number" && Number.isFinite(v) ? Math.round(v) : null; }
+    /** 百分比**两位小数**字符串 (显示口径, 与 stepcode 一致): 42 → "42.00", null → null。
+     *  ⚠️ 必须先 roundHalfUp2 再 toFixed: 服务端 stepfunLeft 现在给的是全精度 (v1.8.0 修),
+     *  97.64 这种第三位小数的值直接 toFixed 会按二进制浮点就近取舍, 显示值跟用户手算对不上。 */
+    function planPct2(v) { return typeof v === "number" && Number.isFinite(v) ? roundHalfUp2(v).toFixed(2) : null; }
+    /** 四舍五入到两位小数再 toFixed。toFixed 自身按二进制浮点就近取舍 (2.675 → "2.67"),
+     *  先 half-up 抹平这层误差, 显示值才跟手算一致 —— 与 stepcode footer 的 roundHalfUp2 同一算法。 */
+    function roundHalfUp2(n) { return (Math.sign(n) * Math.floor(Math.abs(n) * 100 + 0.5)) / 100; }
+    /** 主显示档位: 与 getLevel 同一把尺子 (剩余% > safe 绿, > warn 黄, 否则红) */
+    function planLevel(view, cfg) {
+      if (!view) return null;
+      const p = view.primary;
+      if (!p) return null;
+      if (p.unlimited) return "ok";
+      const v = planPct(p.leftPercent);
+      if (v === null) return null;
+      const safe = cfg?.safeThreshold ?? 50;
+      const warn = cfg?.warnThreshold ?? 10;
+      return v > safe ? "ok" : v > warn ? "warn" : "err";
+    }
+    /** 状态条上的那一小块: { text, title, level } | null (没数据就不占位) */
+    function planBarText(view, t) {
+      if (!view) return null;
+      if (view.kind === "none") return null;       // 无套餐 → 不在状态条显示, 详情里说明
+      if (view.kind === "unavailable") return null; // 查不了 → 同上, 别把接口异常塞进状态条
+      const p = view.primary;
+      if (!p) return null;
+      // 紧凑口径与 stepcode 一致: 「用 11.22M 剩 22.33%」—— 两位小数, 不带「套餐」前缀。
+      // 只拼查得到的段: coding 窗口族没有 M 总量就只剩百分比; 百分比查不到就只剩 M。
+      const parts = [];
+      const usedM = typeof view.usedM === "number" && Number.isFinite(view.usedM) ? view.usedM : null;
+      if (usedM !== null) parts.push(t("plan.usedM", { n: roundHalfUp2(usedM).toFixed(2) }));
+      if (p.unlimited) parts.push(t("plan.unlimited"));
+      else {
+        const left2 = planPct2(p.leftPercent);
+        // 没给百分比(接口没回这个字段)时整段显示「—」而不是「不限量」——
+        // 「查不到」和「真的不限量」是两件事, 别把前者伪装成后者(红线)。
+        if (left2 !== null) parts.push(t("plan.left", { p: left2 }));
+      }
+      return { text: parts.length ? parts.join(" ") : "—", title: planTooltip(view, t), level: planLevel(view) };
+    }
+    /** 浮层/标题用的多行说明 (桌面端 title 能显示, 手机端长按走详情页) */
+    function planTooltip(view, t) {
+      if (!view) return "";
+      const lines = [t("plan.title") + (view.planName ? " · " + view.planName : "")];
+      if (view.kind === "none") { lines.push(t("plan.none")); return lines.join("\n"); }
+      if (view.kind === "unavailable") { lines.push(t("plan.unavailable", { r: view.reason || t("error.unknown") })); return lines.join("\n"); }
+      const p = view.primary;
+      if (p && !p.unlimited) {
+        const left2 = planPct2(p.leftPercent);
+        if (left2 !== null) lines.push(t("plan.left", { p: left2 }) + " · " + t("plan.used", { p: (100 - p.leftPercent).toFixed(2) }));
+      } else if (p && p.unlimited) lines.push(t("plan.unlimitedLeft"));
+      for (const r of view.rows || []) {
+        const name = planRowLabel(r, t);
+        const left2 = r.unlimited ? null : planPct2(r.leftPercent);
+        const bits = [r.unlimited ? t("plan.unlimitedLeft") : (left2 === null ? "—" : t("plan.left", { p: left2 }))];
+        if (r.totalM != null) bits.push(t("plan.credits", { n: roundHalfUp2(r.totalM).toFixed(2) }) + " / " + t("plan.credits", { n: roundHalfUp2(r.remainingM ?? 0).toFixed(2) }));
+        if (r.resetsAt) bits.push(t("plan.resetAt", { t: new Date(r.resetsAt).toLocaleString() }));
+        lines.push(name + ": " + bits.join(" · "));
+      }
+      if (view.quotaState === "partial") lines.push(t("plan.partial"));
+      if (view.expiresAt) lines.push(t("plan.expiresAt", { d: new Date(view.expiresAt).toLocaleDateString() }));
+      return lines.join("\n");
+    }
+    /** 一行套餐明细的名字 (窗口 id / 桶 type → i18n 文案; 认不出一律回退 key 原文) */
+    function planRowLabel(row, t) {
+      if (!row) return "";
+      if (row.kind === "window") {
+        if (row.key === "five_hour") return t("plan.fiveHour");
+        if (row.key === "weekly") return t("plan.weekly");
+        if (row.key === "monthly") return t("plan.monthly");
+        return t("plan.window");
+      }
+      if (row.key === "subscription") return t("plan.bucketSub");
+      if (row.key === "topup") return t("plan.bucketTopup");
+      if (row.key === "total") return t("plan.bucketTotal");
+      return t("plan.bucket");
+    }
     /** 当前 provider 是否为中转站 (非官方直连) —— 中转站无余额接口, 金额显示「—」
      *
      *  三层判定, 优先级由高到低 (与服务端注释一致):
@@ -1456,6 +1604,12 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
         }, isPeak ? "☀️" : "🌙");
       }
 
+      // v1.8.0: 状态条不再显示平台 logo —— 维护者 2026-10-27 反馈「是不是图标搞的鬼,
+      // 是就把图标去掉(所有模型提供商的图标都去掉)」。实测确实有关: 16px 的 logo 是胶囊
+      // 28px 高度的主要推手, 而 dock 里同排的宿主统计药丸只有 22px, align-items:center
+      // 之下高的那项就向上凸一截。平台名本身就是标识, 状态色点也保留, 信息不丢。
+      // ⚠️ 只去掉状态条这一个; 看板卡片(dshadb_card_logo)照旧显示图标 —— 那边有空间。
+      const showCost = config?.showSessionCost === true;
       if (!current) return react.createElement("span", { style: { display: "inline-flex", alignItems: "center", gap: "4px" } }, [
         react.createElement("span", {
           className: "dshadb_bar", onClick: handleBarClick, role: "button", tabIndex: 0,
@@ -1463,10 +1617,9 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
           onTouchStart: startLongPress, onTouchEnd: cancelLongPress, onTouchCancel: cancelLongPress,
           onContextMenu: (e) => e.preventDefault(), key: "main"
         }, [
-          react.createElement("span", { className: "dshadb_bar_logo", key: "logo" }, renderLogo({platform:"deepseek"})),
           react.createElement("span", { className: "dshadb_bar_name", key: "name" }, t("title")),
           peakNode,
-          react.createElement("span", { className: "dshadb_bar_cost", title: cost?.title, key: "cost" }, cost?.text || "~—"),
+          showCost ? react.createElement("span", { className: "dshadb_bar_cost", title: cost?.title, key: "cost" }, cost?.text || "~—") : null,
         ]),
       ]);
 
@@ -1475,6 +1628,12 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
       const dotClass = "dshadb_bar_dot" + (isNoBalance ? "" : " " + (level === "ok" ? "dshadb_bar_dot_ok" : level === "warn" ? "dshadb_bar_dot_warn" : "dshadb_bar_dot_err"));
       const dotStyle = isNoBalance ? { background: "#c7c7cc" } : undefined;
       const amtClass = "dshadb_bar_amount " + (level === "ok" ? "dshadb_bar_ok" : level === "warn" ? "dshadb_bar_warn" : "dshadb_bar_err");
+      // v1.8.0: Step Plan 套餐余量 (阶跃星辰订阅套餐)。没套餐/查不到 → null → 不占位。
+      const plan = config?.showPlan === false ? null : planBarText(current.planView, t);
+      const planNode = plan ? react.createElement("span", {
+        className: "dshadb_bar_plan " + (plan.level === "ok" ? "dshadb_bar_ok" : plan.level === "warn" ? "dshadb_bar_warn" : "dshadb_bar_err"),
+        title: plan.title, key: "plan",
+      }, plan.text) : null;
       return react.createElement("span", { style: { display: "inline-flex", alignItems: "center", gap: "4px" } }, [
         react.createElement("span", {
           className: "dshadb_bar", onClick: handleBarClick, role: "button", tabIndex: 0,
@@ -1482,12 +1641,16 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
           onTouchStart: startLongPress, onTouchEnd: cancelLongPress, onTouchCancel: cancelLongPress,
           onContextMenu: (e) => e.preventDefault(), title: t("bar.hint") + " · " + meta.name, key: "main"
         }, [
-          react.createElement("span", { className: "dshadb_bar_logo", key: "logo" }, renderLogo(current)),
           react.createElement("span", { className: "dshadb_bar_name", key: "name" }, meta.name),
           react.createElement("span", { className: amtClass, key: "amount" }, displayAmount),
+          planNode,
           react.createElement("span", { className: dotClass, style: dotStyle, key: "dot" }),
           peakNode,
-          react.createElement("span", { className: "dshadb_bar_cost", title: cost?.title, key: "cost" }, cost?.text || "~—"),
+          // v1.8.0: 「本会话消耗」尾巴改成开关, 默认关 —— 维护者 2026-10-27 反馈
+          // 「最后面显示的 ~¥47.27 这个尾巴…这个组件删除掉, 要不然就是配置成一个开关」。
+          // 选后者(可配)而不是真删: 会话消耗是本插件的核心投影能力, 看板详情里也一直在,
+          // 有人就习惯在状态条瞟一眼。默认 false = 打开即看不到, 想留的去设置里打开。
+          showCost ? react.createElement("span", { className: "dshadb_bar_cost", title: cost?.title, key: "cost" }, cost?.text || "~—") : null,
         ]),
       ]);
     }
@@ -1856,6 +2019,46 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
         ]);
       }
 
+      // v1.8.0: Step Plan 订阅套餐卡 (阶跃星辰)。余额接口看不到套餐用量, 单开一张卡说清楚。
+      // 结构: 标题 + 每行一个窗口/额度桶 (名字 + 进度条 + 剩余%/额度) + 重置/到期时间。
+      let planCard = null;
+      if (b.planView) {
+        const pv = b.planView;
+        const planRows = (pv.rows || []).map((r) => {
+          const left = r.unlimited ? null : planPct(r.leftPercent);
+          const left2 = r.unlimited ? null : planPct2(r.leftPercent);
+          const barW = left === null ? 100 : Math.max(0, Math.min(100, left));
+          const detail = [];
+          if (r.totalM != null) detail.push(t("plan.remaining") + " " + t("plan.credits", { n: roundHalfUp2(r.remainingM ?? 0).toFixed(2) }) + " / " + t("plan.credits", { n: roundHalfUp2(r.totalM).toFixed(2) }));
+          if (r.resetsAt) detail.push(t("plan.resetAt", { t: new Date(r.resetsAt).toLocaleString() }));
+          if (r.expiresAt) detail.push(t("plan.expiresAt", { d: new Date(r.expiresAt).toLocaleDateString() }));
+          return react.createElement("div", { className: "dshadb_planrow", key: r.kind + ":" + r.key }, [
+            react.createElement("div", { className: "dshadb_planrow_head", key: "h" }, [
+              react.createElement("span", { className: "dshadb_planrow_label", key: "l" }, planRowLabel(r, t)),
+              react.createElement("span", { className: "dshadb_planrow_val", key: "v" }, r.unlimited ? t("plan.unlimitedLeft") : (left2 === null ? "—" : t("plan.left", { p: left2 }))),
+            ]),
+            react.createElement("div", { className: "dshadb_planbar", key: "b" }, [
+              react.createElement("div", { className: "dshadb_planbar_fill " + (left === null ? "is_unknown" : left > 50 ? "is_ok" : left > 10 ? "is_warn" : "is_err"), style: { width: barW + "%" }, key: "f" }),
+            ]),
+            detail.length ? react.createElement("div", { className: "dshadb_planrow_sub", key: "s" }, detail.join(" · ")) : null,
+          ]);
+        });
+        const planHead = react.createElement("div", { className: "dshadb_plancard_title", key: "pt" }, [
+          react.createElement("span", { key: "t" }, t("plan.title") + (pv.planName ? " · " + pv.planName : "")),
+          pv.expiresAt ? react.createElement("span", { className: "dshadb_plancard_meta", key: "m" }, t("plan.expiresAt", { d: new Date(pv.expiresAt).toLocaleDateString() })) : null,
+        ]);
+        let planBody = null;
+        if (pv.kind === "none") planBody = react.createElement("div", { className: "dshadb_detail_info", key: "none" }, t("plan.none"));
+        else if (pv.kind === "unavailable") planBody = react.createElement("div", { className: "dshadb_detail_info", key: "un" }, t("plan.unavailable", { r: pv.reason || t("error.unknown") }));
+        else planBody = planRows.length ? react.createElement("div", { key: "rows" }, planRows) : react.createElement("div", { className: "dshadb_detail_info", key: "empty" }, "—");
+        planCard = react.createElement("div", { className: "dshadb_plancard", key: "plancard" }, [
+          planHead,
+          planBody,
+          pv.quotaState === "partial" ? react.createElement("div", { className: "dshadb_planrow_sub", key: "partial" }, t("plan.partial")) : null,
+          react.createElement("div", { className: "dshadb_plancard_hint", key: "hint" }, t("plan.hint")),
+        ]);
+      }
+
       // v0.5.3: 回退为底部抽屉样式 (全屏卡片观感不佳, 复用看板同款 scrim+drawer)
       return overlayToBody(react.createElement("div", { className: "dshadb_scrim", onClick: (e) => { if (e.target === e.currentTarget) onClose(); } }, [
         react.createElement("div", { className: "dshadb_swipeguard", "aria-hidden": "true", key: "swipeguard" }),
@@ -1932,6 +2135,7 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
               }, t("detail.recharge")) : null,
               peakCard,
               priceCard,
+              planCard,
             ]),
           ]),
         ]),
@@ -2041,6 +2245,12 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
       // v1.4.0: 来自 DSH 的中转站列表默认收起 (跟首页分组同一套折叠手法)。
       // 维护者原话「应该折叠的是来自 DSH 中转站下面的那一罗列」—— 「自动判定结果」保持平铺不折。
       const [showDsh, setShowDsh] = react.useState(false);
+      // v1.8.0: 套餐用量(阶跃星辰 Step Plan)是否进状态条, 默认开
+      const [showPlan, setShowPlan] = react.useState(config?.showPlan !== false);
+      // v1.8.0: 「本会话消耗」尾巴是否进状态条, **默认关** —— 维护者 2026-10-27 要求
+      // 「这个组件删除掉, 要不然就是配置成一个开关」。取后者: 数据仍是核心投影能力,
+      // 只是默认不占状态条。注意默认值与 showPlan 相反(那个默认开), 别抄错。
+      const [showCost, setShowCost] = react.useState(config?.showSessionCost === true);
       /**
        * v1.5.1: 告警通道状态 —— issue #2 点名要的「可见降级」。
        * 通知发不出去（拿不到 3090 桥 token / 桥拒绝 / 当前平台没有桥）时，
@@ -2149,6 +2359,8 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
             if (typeof d.currency === "string") setCurrency(d.currency);
             if (typeof d.overseasCurrency === "string") setOverseasCurrency(d.overseasCurrency);
             if (typeof d.whaleEnabled === "boolean") setWhaleOn(d.whaleEnabled);
+            if (typeof d.showPlan === "boolean") setShowPlan(d.showPlan);
+            if (typeof d.showSessionCost === "boolean") setShowCost(d.showSessionCost);
             if (!subsDirty.current && typeof d.showSubagentCapsules === "boolean") setShowSubs(d.showSubagentCapsules);
             if (Array.isArray(d.officialProviders)) setOfficialText(d.officialProviders.join(", "));
             if (d.providerKinds && typeof d.providerKinds === "object") setProviderKinds(d.providerKinds);
@@ -2305,6 +2517,29 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
           await fetchT("/api-dashboard/config", {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ showNoBalanceBrands: !!next }),
+          });
+          await store.forceRefresh();
+        } catch (e) { /* 网络失败: 本地仍生效, 下次保存/刷新会对齐 */ }
+      };
+      // v1.8.0: 套餐用量开关 —— 与 toggleBrands 同一模式(即时生效 + 即时落盘, 不依赖「保存并生效」)
+      const togglePlan = async (next) => {
+        setShowPlan(next);
+        try {
+          await fetchT("/api-dashboard/config", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ showPlan: !!next }),
+          });
+          await store.forceRefresh();
+        } catch (e) { /* 网络失败: 本地仍生效, 下次保存/刷新会对齐 */ }
+      };
+      // v1.8.0: 「本会话消耗」尾巴开关 —— 同上(即时生效 + 即时落盘)。
+      // ⚠️ 保存体只提交 showSessionCost 布尔, 绝不把 cost/balances 一起回帖(那会泄露整份快照)。
+      const toggleCost = async (next) => {
+        setShowCost(next);
+        try {
+          await fetchT("/api-dashboard/config", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ showSessionCost: !!next }),
           });
           await store.forceRefresh();
         } catch (e) { /* 网络失败: 本地仍生效, 下次保存/刷新会对齐 */ }
@@ -2475,6 +2710,25 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
             react.createElement("span", { className: "dshadb_settings_row_sub", key: "bs" }, t("settings.showBrandsHint")),
           ]),
           react.createElement(Switch, { checked: showBrands, onChange: toggleBrands, key: "bsw" }),
+        ]),
+        // v1.8.0: 套餐用量(阶跃星辰 Step Plan)是否进状态条 —— 窄屏上状态条已经很挤,
+        // 给一个开关; 关掉后看板详情里仍能看全量数据。
+        react.createElement("div", { className: "dshadb_settings_row", key: "planbar", style: { margin: "2px 0 10px" } }, [
+          react.createElement("div", { className: "dshadb_settings_row_main", key: "pm" }, [
+            react.createElement("span", { className: "dshadb_settings_row_title", key: "pt" }, t("settings.showPlan")),
+            react.createElement("span", { className: "dshadb_settings_row_sub", key: "ps" }, t("settings.showPlanHint")),
+          ]),
+          react.createElement(Switch, { checked: showPlan, onChange: togglePlan, key: "psw" }),
+        ]),
+        // v1.8.0: 「本会话消耗」尾巴开关, **默认关** —— 维护者 2026-10-27 反馈状态条末尾
+        // 「~¥47.27 这个尾巴…删除掉, 要不然就是配置成一个开关」。没真删: 会话消耗是核心
+        // 投影能力, 看板详情里一直在, 留个开关比彻底拿掉温和(想要的一开就有)。
+        react.createElement("div", { className: "dshadb_settings_row", key: "costbar", style: { margin: "2px 0 10px" } }, [
+          react.createElement("div", { className: "dshadb_settings_row_main", key: "cm" }, [
+            react.createElement("span", { className: "dshadb_settings_row_title", key: "ct" }, t("settings.showCost")),
+            react.createElement("span", { className: "dshadb_settings_row_sub", key: "cs" }, t("settings.showCostHint")),
+          ]),
+          react.createElement(Switch, { checked: showCost, onChange: toggleCost, key: "csw" }),
         ]),
         // 官方直连 provider 名单 (第 1 层判定, 覆盖自动判定)
         react.createElement("div", { key: "official" }, [

@@ -1667,7 +1667,7 @@ const PLATFORM_PRESETS = [
     baseUrl: 'https://api.moonshot.cn', queryType: 'kimi', envKeys: ['MOONSHOT_API_KEY', 'KIMI_API_KEY'],
     consoleUrl: 'https://platform.kimi.com/console/pay' },                   // 未核实(/console/recharge 是 404, 这个 200)
   { id: 'stepfun', label: '阶跃星辰 StepFun', icon: 'mistral', color: '#FA520F', category: '国内',
-    baseUrl: 'https://api.stepfun.com', queryType: 'stepfun', envKeys: ['STEPFUN_API_KEY'],
+    baseUrl: 'https://api.stepfun.com', queryType: 'stepfun', envKeys: ['STEPFUN_API_KEY', 'STEP_API_KEY'],
     consoleUrl: 'https://platform.stepfun.com/' },                           // 仅首页(/finance /account 全 404)
   { id: 'siliconflow', label: '硅基流动', icon: 'siliconflow', color: '#6E29F6', category: '国内',
     baseUrl: 'https://api.siliconflow.cn', queryType: 'siliconflow', envKeys: ['SILICONFLOW_API_KEY', 'SILICON_API_KEY'],
@@ -1775,6 +1775,14 @@ export const Config = Schema.object({
   /** 显示无余额模型品牌 (OpenAI/Claude/Gemini/Qwen/MiMo), 默认关闭 */
   showNoBalanceBrands: Schema.boolean().default(false),
   showSubagentCapsules: Schema.boolean().default(true),
+  /** v1.8.0: 状态条显示订阅套餐余量 (阶跃星辰 Step Plan), 默认开。
+   *  关掉后只在看板详情里显示 —— 窄屏上状态条已经很挤, 给用户一个退路。 */
+  showPlan: Schema.boolean().default(true),
+  /** v1.8.0: 状态条末尾的「本会话消耗」尾巴, **默认关**。
+   *  维护者 2026-10-27 反馈状态条太挤、想要删掉这个尾巴; 选「默认关 + 可开」而不是真删 ——
+   *  会话消耗是本插件的核心投影能力, 看板详情里一直在, 留个开关给习惯在状态条瞟一眼的人。
+   *  ⚠️ 默认值与 showPlan 相反(那个默认开), 别抄错。 */
+  showSessionCost: Schema.boolean().default(false),
   /** 官方直连 provider 名单 (第 1 层判定, 最高优先级)。
    *  写在这里的 provider 名一律按「官方直连」处理, 状态条显示官方余额;
    *  没写的按 baseURL 域名 / `-official` 后缀自动判定, 都不命中则按中转站显示「—」。 */
@@ -2222,6 +2230,236 @@ export function classifyBizError(queryType, json) {
 }
 
 // ============================================================
+// v1.8.0 阶跃星辰 Step Plan 订阅套餐用量
+// 接口: GET https://api.stepfun.com/step_plan/v1/usage (Bearer key)
+//   与 stepcode 客户端**同一接口同源** (参考实现:
+//   D:\stepcode-stepfun-usage\extensions\lib\api.ts 的 fetchPlanUsage / computeCreditView,
+//   上游 stepfun-ai/Step-Code 的 PlanUsageController)。
+//   阶跃在按量计费余额(/v1/accounts)之外推出了订阅套餐, 余额接口看不到套餐用量。
+// 响应形状 (schema_version=1, scope=personal_account; 字段名逐个对照参考实现, 别猜):
+//   json.observed_at_ms     —— 观测时刻 (ms)
+//   json.plan.state         —— 'known' | 'unavailable'
+//   json.plan.family        —— 'coding'(旧版按次套餐, 限流窗口口径) |
+//                             'token'(Credit 月池, 额度桶口径) | 'none'(无套餐)
+//   json.plan.name          —— 套餐名
+//   json.plan.subscription.expires_at_ms —— 订阅到期
+//   json.quota.state        —— 'known' | 'partial'
+//   json.quota.allowed      —— false = 查不了(带 reason, 如 no_subscription)
+//   json.quota.reason
+//   json.quota.windows[]    —— coding 族限流窗口: id ∈ five_hour/weekly,
+//                             limited / used_percent(已用%) / resets_at_ms
+//   json.quota.credit_buckets[] —— 额度桶: type ∈ subscription/topup(其余 unsupported),
+//                             total / remaining(原始 credit 数, 1e6 = 1M) /
+//                             used_percent / resets_at_ms / expires_at_ms
+// ⚠️ 红线 (与 AGENTS.md 第三节同源): 查不到就**不带 plan 字段**, 客户端显示「未开放/无套餐」,
+//    绝不拿 0 冒充「已用 0%」。结构不认识(schema 版本变了/scope 不对)同样返回 null。
+// ============================================================
+
+const stepfunNum = (v) => {
+  if (v === null || v === undefined || v === '') return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+/** *_ms 时间戳: 非法整数(含 0/缺失) → null, 与参考实现的 intOrNull 同口径 */
+const stepfunMs = (v) => {
+  const n = stepfunNum(v)
+  return n !== null && Number.isSafeInteger(n) && n > 0 ? n : null
+}
+/** 已用% → 剩余% (接口给的是**已用**百分比, 方向别弄反)。
+ *  ⚠️ 这里保留**全精度**, 一个 Decimal 都不砍 —— 砍精度只允许发生在显示层, 且一次砍到位。
+ *  v1.8.0 曾写成 Math.round(x*10)/10(留 1 位小数), 于是真机 97.64% 被显示成 97.60%,
+ *  与阶跃控制台手算对不上 (维护者实测反馈)。口径: 服务端给原值, 客户端 planPct2 按两位 half-up。 */
+const stepfunLeft = (usedPercent) => (usedPercent === null ? null : 100 - usedPercent)
+
+/**
+ * 解析 /step_plan/v1/usage 响应 → 归一化套餐对象; 结构不认识 → null。
+ * 返回形状 (字段名与参考实现的 PlanUsageInfo 对齐, 客户端与 summarizeStepfunPlan 只认这个):
+ * {
+ *   planState: 'known'|'unavailable', family: 'coding'|'token'|'none',
+ *   planName: string|null, expiresAt: number|null,        // 订阅到期 (ms)
+ *   quotaState: 'known'|'partial', allowed: boolean, reason: string|null,
+ *   windows: [{ id, limited, usedPercent, resetsAt }],    // 只留 five_hour / weekly
+ *   buckets: [{ type, unsupported, total, remaining, usedPercent, resetsAt, expiresAt }],
+ *   observedAt: number,
+ * }
+ */
+export const parseStepfunPlan = (json) => {
+  if (!json || typeof json !== 'object') return null
+  // 只认 schema_version=1 的个人账户 scope —— 未来版本/其它 scope 宁可不显示, 不猜字段
+  if (json.schema_version !== 1 || json.scope !== 'personal_account') return null
+  // ⚠️ 与参考实现的一处**故意分歧**: 参考实现缺 plan 时按空套餐对象继续(最终渲染成「不可用」),
+  // 这里返回 null —— 真实响应一定带 plan, 缺了就是没见过的结构, 按插件红线「不显示」处理。
+  const plan = json.plan
+  if (!plan || typeof plan !== 'object') return null
+  const quota = (json.quota && typeof json.quota === 'object') ? json.quota : {}
+  const windows = (Array.isArray(quota.windows) ? quota.windows : []).flatMap((w) => {
+    const id = typeof w?.id === 'string' ? w.id : ''
+    // 只认这两个窗口 id: 别的 id 我们没有对应文案, 塞进去也是渲染不出来
+    if (id !== 'five_hour' && id !== 'weekly') return []
+    return [{ id, limited: w.limited === true, usedPercent: stepfunNum(w.used_percent), resetsAt: stepfunMs(w.resets_at_ms) }]
+  })
+  const buckets = (Array.isArray(quota.credit_buckets) ? quota.credit_buckets : []).map((b) => ({
+    type: typeof b?.type === 'string' ? b.type : '',
+    // 参考实现: 只有 subscription / topup 两种桶有明确语义, 其余一律按 unsupported 处理
+    unsupported: b?.unsupported === true || (b?.type !== 'subscription' && b?.type !== 'topup'),
+    total: stepfunNum(b?.total),
+    remaining: stepfunNum(b?.remaining),
+    // 官方 used_percent 优先; 缺失才用 remaining/total 自己算 (与参考实现同)
+    usedPercent: stepfunNum(b?.used_percent),
+    resetsAt: stepfunMs(b?.resets_at_ms),
+    expiresAt: stepfunMs(b?.expires_at_ms),
+  }))
+  const family = plan.family === 'coding' || plan.family === 'none' ? plan.family : 'token'
+  return {
+    planState: plan.state === 'unavailable' ? 'unavailable' : 'known',
+    family,
+    planName: typeof plan.name === 'string' && plan.name ? plan.name : null,
+    expiresAt: stepfunMs(plan.subscription?.expires_at_ms),
+    quotaState: quota.state === 'partial' ? 'partial' : 'known',
+    allowed: quota.allowed === true,
+    reason: typeof quota.reason === 'string' && quota.reason ? quota.reason : null,
+    windows, buckets,
+    observedAt: stepfunMs(json.observed_at_ms) ?? Date.now(),
+  }
+}
+
+/**
+ * 把归一化套餐压成**客户端直接可渲染**的视图 (i18n 文案仍归客户端, 这里只给 key 与数字)。
+ * 聚合口径与 stepcode 的 computeCreditView 一致:
+ *   - token 族: 只聚合 supported 桶(subscription + topup), 官方百分比按 total 加权平均;
+ *   - coding 族: 直接用 five_hour / weekly 窗口的剩余%;
+ *   - 无套餐/查不了: kind = 'none' | 'unavailable', 不带任何行。
+ * {
+ *   kind: 'buckets'|'windows'|'none'|'unavailable',
+ *   planName, expiresAt, observedAt, reason, quotaState, family,
+ *   usedM, totalM, leftPercent,            // token 族聚合 (单位 M credits)
+ *   fiveHourLeftPercent, weeklyLeftPercent, // coding 族窗口
+ *   primary: { key, kind, leftPercent, resetsAt, unlimited } | null,  // 状态条主显示
+ *   rows: [{ key, kind:'window'|'bucket', leftPercent, usedPercent, resetsAt, expiresAt,
+ *            unlimited, remainingM, totalM }],
+ * }
+ */
+export const summarizeStepfunPlan = (plan) => {
+  if (!plan) return null
+  const base = {
+    planName: plan.planName || null,
+    expiresAt: plan.expiresAt,
+    observedAt: plan.observedAt,
+    quotaState: plan.quotaState,
+    family: plan.family,
+    reason: plan.reason || null,
+  }
+  if (plan.planState !== 'known') return { ...base, kind: 'none', primary: null, rows: [] }
+  if (!plan.allowed) return { ...base, kind: 'unavailable', primary: null, rows: [] }
+
+  const rows = []
+  if (plan.family === 'coding') {
+    const pct = (w) => {
+      if (!w) return null
+      if (w.usedPercent !== null) return stepfunLeft(w.usedPercent)
+      return w.limited ? null : 100   // 不限量 = 剩 100%
+    }
+    for (const w of plan.windows) {
+      rows.push({
+        key: w.id, kind: 'window', leftPercent: pct(w), usedPercent: w.usedPercent,
+        resetsAt: w.resetsAt, expiresAt: null, unlimited: w.limited !== true,
+        remainingM: null, totalM: null,
+      })
+    }
+    const fiveHour = rows.find((r) => r.key === 'five_hour') || null
+    const weekly = rows.find((r) => r.key === 'weekly') || null
+    return {
+      ...base, kind: 'windows',
+      usedM: null, totalM: null,
+      leftPercent: weekly?.leftPercent ?? fiveHour?.leftPercent ?? null,
+      fiveHourLeftPercent: fiveHour?.leftPercent ?? null,
+      weeklyLeftPercent: weekly?.leftPercent ?? null,
+      // 状态条主显示取 5 小时窗口 (会话进行中最先耗尽的那个), 取不到再退周配额
+      primary: fiveHour || weekly || null,
+      rows,
+    }
+  }
+
+  if (plan.family === 'token') {
+    const supported = plan.buckets.filter((b) => !b.unsupported)
+    let total = 0, remaining = 0, weighted = 0, hasOfficial = false
+    for (const b of supported) {
+      if (b.total === null || b.remaining === null) continue
+      total += b.total
+      remaining += b.remaining
+      if (b.usedPercent !== null) { hasOfficial = true; weighted += b.usedPercent * b.total }
+    }
+    for (const b of supported) {
+      const bTotal = b.total, bRemaining = b.remaining
+      const bUsed = bTotal !== null && bRemaining !== null ? bTotal - bRemaining : null
+      const bPct = b.usedPercent !== null ? b.usedPercent : (bUsed !== null && bTotal ? (bUsed / bTotal) * 100 : null)
+      if (bPct === null) continue
+      rows.push({
+        key: b.type, kind: 'bucket', leftPercent: stepfunLeft(bPct), usedPercent: bPct,
+        resetsAt: b.resetsAt, expiresAt: b.expiresAt, unlimited: false,
+        remainingM: bRemaining === null ? null : bRemaining / 1e6,
+        totalM: bTotal === null ? null : bTotal / 1e6,
+      })
+    }
+    if (total <= 0) return { ...base, kind: 'none', primary: null, rows: [] }
+    const usedPercent = hasOfficial ? weighted / total : ((total - remaining) / total) * 100
+    const leftPercent = stepfunLeft(usedPercent)
+    // 主显示 = 整体剩余%, 桶明细由浮层展开
+    return {
+      ...base, kind: 'buckets',
+      usedM: (total - remaining) / 1e6,
+      totalM: total / 1e6,
+      leftPercent,
+      fiveHourLeftPercent: null, weeklyLeftPercent: null,
+      primary: { key: 'total', kind: 'bucket', leftPercent, resetsAt: null, unlimited: false },
+      rows,
+    }
+  }
+
+  return { ...base, kind: 'none', primary: null, rows: [] }
+}
+
+/** 这个 baseUrl 是不是阶跃官方 API 主机 (自定义中转站也走套餐接口的前提) */
+export const isStepfunPlanHost = (base) => {
+  try {
+    const host = new URL(String(base || '')).hostname
+    return host === 'api.stepfun.com' || host.endsWith('.stepfun.com')
+  } catch { return false }
+}
+
+/**
+ * 查 Step Plan 用量。**绝不影响余额**: 任何失败都返回 { plan: null, error },
+ * 调用方据此决定「不带 plan 字段」而不是把余额查询判失败。
+ * 404 = 该 key 暂无套餐/接口未开放; 401/403 = key 无权查询; 其余 = 接口异常。
+ */
+async function fetchStepfunPlan(base, apiKey, config) {
+  const url = `${String(base || '').replace(/\/+$/, '')}/step_plan/v1/usage`
+  try {
+    const res = await fetchWithTimeout(url, {
+      Accept: 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    }, config?.timeoutMs || 8000, 'GET')
+    if (!res.ok) return { plan: null, error: `HTTP ${res.status}` }
+    const text = await res.text()
+    let json = null
+    try { json = JSON.parse(text) } catch { json = null }
+    const plan = parseStepfunPlan(json)
+    if (!plan) return { plan: null, error: 'unrecognized' }
+    return { plan, error: null }
+  } catch (error) {
+    return { plan: null, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+/** 把套餐查询结果并进余额对象 (只有真拿到才并, 失败/未开放都不留痕) */
+export const attachStepfunPlan = (balance, planResult) => {
+  if (!balance || !planResult || !planResult.plan) return balance
+  const view = summarizeStepfunPlan(planResult.plan)
+  if (!view) return balance
+  return { ...balance, plan: planResult.plan, planView: view }
+}
+
+// ============================================================
 // 查询单个预设平台
 // ============================================================
 async function queryPreset(platform, apiKey, config) {
@@ -2258,6 +2496,10 @@ async function queryPreset(platform, apiKey, config) {
     default: url = `${base}/v1/dashboard/billing/credit_grants`; headers['Authorization'] = `Bearer ${apiKey}`; queryType = 'openai'; break
   }
 
+  // v1.8.0: 阶跃星辰 Step Plan 套餐用量 —— 与余额**并发**请求, 互不影响。
+  // 拿不到就不带 plan 字段 (客户端显示「未开放/无套餐」), 绝不影响余额本身的成败。
+  const planPromise = platform.queryType === 'stepfun' ? fetchStepfunPlan(base, apiKey, config) : null
+
   try {
     const res = await fetchWithTimeout(url, headers, config.timeoutMs || 8000, method)
     if (!res.ok) {
@@ -2286,13 +2528,15 @@ async function queryPreset(platform, apiKey, config) {
       }
     }
 
-    return {
+    const ok = {
       platform: platform.id, name: platform.label, icon: platform.icon, color: platform.color,
       category: platform.category, status: 'ok', total: parsed.total, currency: parsed.currency,
       available: parsed.available, used: parsed.used, topup: parsed.topup, grant: parsed.grant,
       note: parsed.note, percent: parsed.percent,
       noBalance: false, fetchedAt: Date.now(),
     }
+    // 套餐查询失败/未开放都不带 plan 字段 —— 余额照常显示
+    return planPromise ? attachStepfunPlan(ok, await planPromise.catch(() => null)) : ok
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return {
@@ -2324,6 +2568,9 @@ async function queryCustomRelay(relay, config) {
     return { platform: id, name: name || '中转站', icon: 'relay', color: '#64748B', category: '中转站', status: 'no-key', error: '未配置 API Key', noBalance: true, fromDsh }
   }
   const base = (baseUrl || '').replace(/\/+$/, '')
+
+  // v1.8.0: 指向阶跃官方 API 的中转站同样查 Step Plan 用量 (与 queryPreset 的 stepfun 分支同接口)
+  const planPromise = isStepfunPlanHost(base) ? fetchStepfunPlan(base, apiKey, config) : null
 
   // 候选端点探测
   const candidates = []
@@ -2360,12 +2607,13 @@ async function queryCustomRelay(relay, config) {
           relayEndpointHints.set(id, cand.type)
           try { savePersistedState({ relayEndpoints: Object.fromEntries(relayEndpointHints) }) } catch { /* 落盘失败不影响本次结果 */ }
         }
-        return {
+        const ok = {
           platform: id, name: name || '中转站', icon: 'relay', color: '#64748B', category: '中转站',
           status: 'ok', total: parsed.total, currency: parsed.currency, available: parsed.available,
           used: parsed.used, note: parsed.note || cand.type, percent: parsed.percent,
           noBalance: false, queryType: cand.type, fetchedAt: Date.now(), fromDsh,
         }
+        return planPromise ? attachStepfunPlan(ok, await planPromise.catch(() => null)) : ok
       }
     } catch { /* 尝试下一个 */ }
   }
@@ -3223,6 +3471,11 @@ export function apply(ctx, config) {
     whaleEnabled: persisted.whaleEnabled ?? config.whaleEnabled ?? false,
     showNoBalanceBrands: persisted.showNoBalanceBrands ?? config.showNoBalanceBrands ?? false,
     showSubagentCapsules: typeof persisted.showSubagentCapsules === 'boolean' ? persisted.showSubagentCapsules : config.showSubagentCapsules ?? true,
+    // v1.8.0: 默认 true。老状态文件里没有这个字段 → 落到默认值 (与 configVersion 迁移无关, 布尔缺省即开)
+    showPlan: typeof persisted.showPlan === 'boolean' ? persisted.showPlan : config.showPlan ?? true,
+    // v1.8.0: 默认 false(尾巴默认不占状态条)。老状态文件没有这个字段 → 落默认值。
+    // 布尔缺省即关, 不需要 CONFIG_VERSION 迁移。
+    showSessionCost: typeof persisted.showSessionCost === 'boolean' ? persisted.showSessionCost : config.showSessionCost ?? false,
     officialProviders: normalizeOfficialProviders(persisted.officialProviders ?? config.officialProviders ?? []),
     // v1.4.0「真自动」: 被用户关掉的 DSH provider (默认空 = 全部启用)。复用同一个名单规范化器。
     dshProviderOptOut: normalizeOfficialProviders(persisted.dshProviderOptOut ?? config.dshProviderOptOut ?? []),
@@ -3412,6 +3665,10 @@ export function apply(ctx, config) {
           whaleEnabled: !!runtimeConfig.whaleEnabled,
           showNoBalanceBrands: !!runtimeConfig.showNoBalanceBrands,
             showSubagentCapsules: !!runtimeConfig.showSubagentCapsules,
+          // v1.8.0: 套餐余量是否进状态条 (默认 true)
+          showPlan: !!runtimeConfig.showPlan,
+          // v1.8.0: 状态条末尾「本会话消耗」尾巴 (默认 false)
+          showSessionCost: !!runtimeConfig.showSessionCost,
           // provider 官方/中转判定素材下发给客户端 (第 1 层: 用户名单; 第 2 层: baseURL 域名判定)
           officialProviders: runtimeConfig.officialProviders,
           providerKinds: readProviderKinds(),
@@ -3817,7 +4074,7 @@ export function apply(ctx, config) {
             let body = await readBody(req)
             body = body ? JSON.parse(body) : {}
             // 纯开关保存不等待外部余额网络；先落盘成功再提交内存。
-            const toggleFields = ['showSubagentCapsules', 'whaleEnabled', 'showNoBalanceBrands']
+            const toggleFields = ['showSubagentCapsules', 'whaleEnabled', 'showNoBalanceBrands', 'showPlan', 'showSessionCost']
             const keys = Object.keys(body)
             if (keys.length && keys.every(k => toggleFields.includes(k) && typeof body[k] === 'boolean')) {
               if (!savePersistedState(body)) return sendJson(res, 500, { ok: false, error: 'settings-save-failed' })
@@ -3875,6 +4132,10 @@ export function apply(ctx, config) {
             // 显示无余额模型品牌
             if (typeof body.showNoBalanceBrands === 'boolean') runtimeConfig.showNoBalanceBrands = body.showNoBalanceBrands
             if (typeof body.showSubagentCapsules === 'boolean') runtimeConfig.showSubagentCapsules = body.showSubagentCapsules
+            // v1.8.0: 套餐余量是否进状态条
+            if (typeof body.showPlan === 'boolean') runtimeConfig.showPlan = body.showPlan
+            // v1.8.0: 状态条末尾「本会话消耗」尾巴 (默认关)
+            if (typeof body.showSessionCost === 'boolean') runtimeConfig.showSessionCost = body.showSessionCost
             // 官方直连 provider 名单 (第 1 层判定); 接受数组或逗号/换行分隔的字符串
             if (Array.isArray(body.officialProviders) || typeof body.officialProviders === 'string') {
               runtimeConfig.officialProviders = normalizeOfficialProviders(body.officialProviders)
@@ -3899,6 +4160,8 @@ export function apply(ctx, config) {
               whaleEnabled: runtimeConfig.whaleEnabled,
               showNoBalanceBrands: runtimeConfig.showNoBalanceBrands,
               showSubagentCapsules: runtimeConfig.showSubagentCapsules,
+              showPlan: runtimeConfig.showPlan,
+              showSessionCost: runtimeConfig.showSessionCost,
               officialProviders: runtimeConfig.officialProviders,
               dshProviderOptOut: runtimeConfig.dshProviderOptOut,
             })
@@ -3913,6 +4176,8 @@ export function apply(ctx, config) {
               whaleEnabled: !!runtimeConfig.whaleEnabled,
               showNoBalanceBrands: !!runtimeConfig.showNoBalanceBrands,
             showSubagentCapsules: !!runtimeConfig.showSubagentCapsules,
+            showPlan: !!runtimeConfig.showPlan,
+            showSessionCost: !!runtimeConfig.showSessionCost,
               officialProviders: runtimeConfig.officialProviders,
               providerKinds: readProviderKinds(),
               dshProviders: readDshProviderStatus(),

@@ -11,10 +11,11 @@
 // **全都没有**任何手机 webview 处理, 一律裸 window.open —— 所以 ① 这条是本插件特有的回归点。
 const fs = await import('node:fs')
 const path = await import('node:path')
+const { fileURLToPath } = await import('node:url')
 let pass = 0, fail = 0
 const a = (name, cond, extra) => { if (cond) { pass++ } else { fail++; console.log('FAIL ' + name + (extra ? '  ' + extra : '')) } }
 
-const ROOT = path.resolve(new URL('..', import.meta.url).pathname)
+const ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const src = fs.readFileSync(path.join(ROOT, 'src/index.js'), 'utf8')
 const cli = fs.readFileSync(path.join(ROOT, 'client/client.js'), 'utf8')
 

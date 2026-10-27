@@ -14,7 +14,7 @@ globalThis.requestAnimationFrame=(f)=>{f(0);return 1}
 globalThis.cancelAnimationFrame=()=>{}
 let captured=null
 globalThis.window.__ModuleLoader__={load({factory}){captured=factory((n)=>{if(n==='react')return react;if(n==='@deepseek-ai/dsh-client-ui-primitives')return {};throw new Error('未知依赖 '+n)})}}
-let src=readFileSync(new URL('../client/client.js', import.meta.url).pathname, 'utf8')
+let src=readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
 const marker='    exports.apply = apply;'
 src=src.replace(marker,`    exports.__test = { modelToPlatform, metaFor };
 `+marker)

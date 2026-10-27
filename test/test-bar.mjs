@@ -14,9 +14,10 @@ globalThis.requestAnimationFrame=(f)=>{f(0);return 1}
 globalThis.cancelAnimationFrame=()=>{}
 let captured=null
 globalThis.window.__ModuleLoader__={load({factory}){captured=factory((n)=>{if(n==='react')return react;if(n==='@deepseek-ai/dsh-client-ui-primitives')return {};throw new Error('未知依赖 '+n)})}}
-let src=readFileSync(new URL('../client/client.js', import.meta.url).pathname, 'utf8')
+// Windows: fs 吃 URL 对象; 用 .pathname 会得到 /D:/... → Node 解析成 D:\D:\...(ENOENT)
+let src=readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
 const marker='    exports.apply = apply;'
-src=src.replace(marker,`    exports.__test = { modelToPlatform, isRelayProvider, barAmountText, buildSubagentRow, formatSessionCost };
+src=src.replace(marker,`    exports.__test = { modelToPlatform, isRelayProvider, barAmountText, buildSubagentRow, formatSessionCost, planLevel, planBarText, planTooltip, planRowLabel };
 `+marker)
 new Function('window','document','navigator','localStorage',src)(globalThis.window,doc,{hardwareConcurrency:8,language:'zh-CN'},globalThis.localStorage)
 const T=captured.__test
@@ -177,9 +178,12 @@ a('reveal 幂等(只露一次)', /if \(revealed\) return;/.test(src))
 a('reveal 里才恢复 transition', /function reveal\(\)[\s\S]{0,300}root\.style\.transition = ""/.test(src))
 
 // ===== 状态条定住高度下限 =====
-// 空态内容 18px、有数据态 20px → 钱数/平台名一进来状态条从 26px 变 28px, 把上面的会话区顶 2px
-// (真机实测 CLS 0.00094+0.00053)。用 min-height 定下限而非 height, 系统字体放大仍不裁字。
-a('状态条定住高度下限 28px', /\.dshadb_bar\{[^}]*min-height:28px/.test(src))
+// 空态内容与有数据态内容高不同, 钱数/平台名一进来状态条就变高, 把上面的会话区顶 2px
+// (v1.4.1 真机实测 CLS 0.00094+0.00053)。用 min-height 定下限而非 height, 系统字体放大仍不裁字。
+// v1.8.0: 28px → 22px。原因不是 CLS 而是**垂直对齐**: 宿主 dock 是 align-items:center 的 flex 行,
+// 同排统计药丸实测总高 22px(line-height 20px + 1px 上下 padding), 我们的胶囊 28px 就向上凸一截 ——
+// 维护者三次反馈「显示稍微向上偏移 / 上半部分紧贴着输入框」。对齐药丸高度才是根治。
+a('状态条定住高度下限 22px(与宿主 dock 同排药丸等高, 不再向上凸)', /\.dshadb_bar\{[^}]*min-height:22px/.test(src))
 a('min-height 配 border-box(含 padding, 与实测总高一致)', /\.dshadb_bar\{[^}]*box-sizing:border-box/.test(src))
 a('没写死 height(字体放大不裁字)', !/\.dshadb_bar\{[^}]*;height:/.test(src))
 
@@ -207,6 +211,22 @@ a('宿主统计行占满一行(状态条自然落到下一行)',
   /\[data-slot="conversation\.composer\.dock"\] > \[data-composer-stats\]\{[^}]*flex:0 0 100%/.test(src))
 a('没给 dock 加 overflow(会撞手机壳横向滚动容器让路规则)',
   !/\[class\*="_dock"\]:has\([^)]*\)\{[^}]*overflow/.test(src))
+// ===== v1.8.0 状态条三改(维护者 2026-10-27 反馈) =====
+// ① 去掉平台 logo: 16px logo 是胶囊 28px 高度的主要推手, dock 里同排药丸只有 22px,
+//    align-items:center 之下高的那项就向上凸一截。平台名本身就是标识, 状态色点也保留。
+//    ⚠️ 只钉状态条: 看板卡片(dshadb_card_logo)照旧显示图标, 那边有空间。
+// ② 「本会话消耗」尾巴改开关, 默认关(config?.showSessionCost === true 才渲染)。
+// ③ 高度对齐: 上面 22px 那条。
+a('状态条不再渲染平台 logo(BarReadout 里没有 renderLogo)',
+  !/const T = BarReadout[\s\S]{0,200}renderLogo/.test(src))
+a('看板卡片仍渲染 logo(只去状态条那一处)', /dshadb_card_logo/.test(src))
+a('「本会话消耗」尾巴由 showSessionCost 开关把着, 默认不渲染',
+  /config\?\.showSessionCost === true/.test(src))
+a('开关关掉时尾巴整体不占位(三元返回 null, 不是空 span)',
+  /showCost \? react\.createElement\("span", \{ className: "dshadb_bar_cost"[\s\S]{0,120}: null/.test(src))
+a('设置面板有 showCost 开关文案(中英成对)', /"settings\.showCost"/.test(src))
+a('开关默认值取 false(不是 !== false 那种"默认开"写法)',
+  /useState\(config\?\.showSessionCost === true\)/.test(src))
 
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`)
 // v1.3.2: 断言失败时以非 0 退出, 否则 CI(GitHub Actions)拦不住回归 —— 原来一律 exit 0

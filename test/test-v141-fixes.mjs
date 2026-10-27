@@ -5,11 +5,13 @@
 const fs = await import('node:fs')
 const os = await import('node:os')
 const path = await import('node:path')
+const { fileURLToPath } = await import('node:url')
 const { mkdirSync, writeFileSync, rmSync, existsSync, symlinkSync, readFileSync } = fs
 let pass = 0, fail = 0
 const a = (name, cond, extra) => { if (cond) { pass++ } else { fail++; console.log('FAIL ' + name + (extra ? '  ' + extra : '')) } }
 
-const ROOT = path.resolve(new URL('..', import.meta.url).pathname)
+// Windows: .pathname 给 /D:/... → path.resolve 解析成 D:\D:\...(ENOENT); 必须 fileURLToPath
+const ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const src = readFileSync(path.join(ROOT, 'src/index.js'), 'utf8')
 const cli = readFileSync(path.join(ROOT, 'client/client.js'), 'utf8')
 

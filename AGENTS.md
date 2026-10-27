@@ -222,6 +222,94 @@ DSH 启动时会把 profile 的 `dsh.profile.bundles` **逐个 import**，只要
 
 ---
 
+## 五bis、Step Plan 订阅套餐（v1.8.0 新增，改这块前必读）
+
+**它解决什么**：阶跃星辰在按量余额（`/v1/accounts`）之外有 Step Plan 订阅套餐，余额接口看不到套餐用量。
+
+**数据流**
+1. 套餐接口 `GET https://api.stepfun.com/step_plan/v1/usage`，`Authorization: Bearer <key>`。
+   响应**顶层**是 `schema_version` / `scope` / `observed_at_ms` / `plan_id` / `plan_name` /
+   `status` / `quota_state` / `expires_at`，主体是 `windows[]`（限流窗口：5 小时 / 周 / 月，
+   字段 `key`/`label`/`used`/`total`/`remaining`/`used_percent`/`resets_at_ms`）与
+   `credit_buckets[]`（额度桶：`type` = `subscription` | `topup`，字段同上）。
+   ⚠️ **字段名以真机抓包为准**：`window`（不是 `windows`）、`credit_bucket`（不是 `credit_buckets`）、
+   `reset_at_ms`（不是 `resets_at_ms`）这类复数/命名单复数差异极易写错 ——
+   `test/test-stepfun-plan.mjs` 的夹具就是按真机形状写的，改解析前先看它。
+2. `parseStepfunPlan(json)`：严格校验 `schema_version === 1 && scope === 'personal_account'`，
+   窗口只收 `supported !== false` 的，`family === 'token'` 的窗口**聚合成一行**
+   （有官方 `used_percent` 时按 `total` 加权，否则 `(total - remaining) / total`）；
+   桶按 `type` 分「订阅额度 / 加油包额度」。输出 `{ kind, primary, rows, quotaState, planName, expiresAt, ... }`。
+3. `summarizeStepfunPlan(parsed)` 出**视图**（`kind: 'active' | 'none' | 'unavailable'`），
+   只把视图下发给客户端（`balance.planView`），**原始响应不出网**。
+4. 接线点三处：`queryPreset`（`platform === 'stepfun'` 时并发拿套餐，挂在返回对象的 `plan` 字段）、
+   `queryCustomRelay`（base host 命中 `api.stepfun.com` 时）、`refreshAll`（合并进轮询，不额外占一次）。
+5. 客户端：`planBarText(view, t)` 出状态条 chip（`config.showPlan === false` 时不渲染），
+   `PlatformDetail` 里渲染套餐卡，设置面板「状态条显示套餐用量」开关 `POST /api-dashboard/config` 只提交 `{ showPlan }`。
+
+**🔴 红线（与第三节一致，别再犯）**
+- **`leftPercent` 为 null ≠ 不限量**：查不到百分比时状态条只显示「用 11.22M」或「—」、详情显示「—」。
+  早期版本把 `left === null` 和 `unlimited` 合成一个分支显示「套餐 不限量」—— 已修，别改回去。
+- **没套餐 / 查不了 → 状态条不占位**（`kind` 为 `none` / `unavailable` 时 `planBarText` 返回 null），
+  只在看板里说明原因。绝不用 0 冒充「已用 0%」。
+- **档位与 `getLevel` 同一把尺子**（`safeThreshold` / `warnThreshold`，默认 50 / 10），不另立阈值。
+- **砍精度只发生在显示层**：服务端 `stepfunLeft` 给**全精度**（`100 - usedPercent`，一个 Decimal 都不抹），
+  客户端 `planPct2` 先 `roundHalfUp2` 再 `toFixed`。第一版在服务端 `Math.round(x*10)/10` 留 1 位小数，
+  真机 `used_percent = 2.36` → 剩余 97.64% 被显示成「剩 97.60%」，与阶跃控制台手算对不上（维护者实测）。
+  ⚠️ 别再把取整挪回服务端 —— 那里还会被 M 数、阈值比较等下游二次消费。
+
+**回归钉子**：`test/test-stepfun-plan.mjs`（53 条，服务端全分支）+
+`test/test-v180-plan-ui.mjs`（状态条 chip / 两位小数 / 档位 / 开关默认开 / 详情卡进度条夹取 / 中英文案成对）。
+
+**状态条文案口径（v1.8.0 定稿，与 stepcode footer 一致）**：`用 11.22M 剩 22.33%` ——
+两位小数、**不带「套餐」前缀**、只拼查得到的段（窗口族没有 M 总量就只显示 `剩 22.33%`，
+百分比查不到就只显示 `用 11.22M`，两者都没有才是 `—`）。
+- `planPct2` = 纯 `toFixed(2)`（百分比）；`roundHalfUp2` = **half-up 后再 toFixed**（M 数）。
+  为什么两套：`(2.675).toFixed(2)` 是 `"2.67"`（2.675 存成 2.67499999…），
+  直接 toFixed 会让 `2.675M` 显示成 `2.67M`、跟用户在阶跃控制台手算的对不上。
+- ⚠️ **没有 `usedM` 时绝不补 `用 0.00M`**（「查不到」≠「用了 0」，红线同第三节）。
+  测试钉了这条（A1c）与 `roundHalfUp2 vs toFixed`（A1b）。
+⚠️ `test-v180-plan-ui.mjs` 的假 React **不会渲染函数组件**，所以 `Switch` 在树里还是
+「type = 函数」的元素，只能断言它的 `props`（`checked` / `onChange`），别去找 `aria-checked`。
+
+---
+
+## 五ter、状态条的垂直对齐：`margin-top:0` + 无 logo + `min-height:22px`（v1.8.0 定稿，改前必读）
+
+维护者**三次截图**反馈同一件事：「显示稍微向上偏移了一点」→「上半部分还是紧贴着输入框，
+向下倒是感觉好像和其他组件对齐了」→「这个余额部分 44.33 字体向上飘了一点」。前两次都只动了
+负 margin（`-12px` → `-4px`），**都没治对本**。定稿是三件事一起做，缺一件就还是歪：
+
+1. **`margin-top` 归零**（`.dshadb_barwrap{...;margin:0 auto 0}`）。
+   根因不在「空白多少」而在** dock 是单行 flex**：本机 `app.asar` 实测
+   `.Q7WfXG_dock{justify-content:center;align-items:center;gap:12px;padding-top:4px;display:flex}`
+   —— **没有 `flex-wrap`**，本插件胶囊与宿主统计药丸（`data-composer-stat`，`.K-8v-a_anchor{font-size:12px;line-height:20px}`
+   + `.K-8v-a_pill{padding:1px 8px}`，总高 **22px**）**排在同一条行里**、共用同一个垂直中心。
+   只要 `margin-top` 是负的（`-12`/`-8`/`-4` 全试过），胶囊就被在居中的行里再往上拽 →
+   上沿顶到输入框、下沿却与别人齐平。**负 margin 在这版宿主里没有任何正当用途。**
+2. **状态条不渲染平台 logo**（`BarReadout` 里不再调 `renderLogo`）。16px logo 是胶囊高度的主要推手；
+   平台名本身就是标识，三色状态点也保留，信息不丢。⚠️ **只去状态条这一处** ——
+   看板卡片 `dshadb_card_logo` / 平台详情 `dshadb_detail_logo` 照旧显示（那边有空间）。
+   维护者原话：「是不是图标搞的鬼, 如果是就把图标去掉（所有模型提供商的图标都去掉,
+   或者是把图标显示尺寸缩小一点和这一排字体一样）」。
+3. **`min-height:22px`**（不是 28px）。22 = 宿主药丸实测总高（line-height 20px + 1px 上下 padding），
+   两边等高，`align-items:center` 之下自然同一水平线。⚠️ 仍用 `min-height` 不用 `height`
+   （系统字体放大不裁字），`box-sizing:border-box` 必须留着。
+   ⚠️ 28px 那个值是 v1.4.1 冷启动 LayoutShift 的旧钉子（见下文 ⑤），**已经被本条取代**；
+   ⑤ 里那张「26px 变 28px」的表是历史记录，别再按它调回 28。
+
+⚠️ **别再把「状态条独占一行」当对齐手段**：v1.6.6 的
+`[data-slot="conversation.composer.dock"] > [data-composer-stats]{flex:0 0 100%}` 在当前宿主里
+**已经失效** —— `data-composer-stats`（复数）这个属性名在 DSH NEXT 的 `app.asar` 里**不存在**
+（现在是单数 `data-composer-stat`）。选择器不命中 = 规则是死的，胶囊其实一直在跟药丸同排。
+要改布局先 `grep -a` 一遍 `app.asar` 确认属性名/类名，别照抄三年前的钉子。
+
+⚠️ 宿主 dock 的类名随 DSH 版本会变（`lRFBkG_dock` → `Q7WfXG_dock`），**所以钉子断言一律钉
+我们自己的 CSS 值**（`margin:0 auto 0`、`min-height:22px`、无 logo），别去钉宿主演名。
+回归钉子：`test/test-v170-ui-fixes.mjs`（钉 `margin:0 auto 0` + 反向禁止负 margin-top）、
+`test/test-bar.mjs`（钉 22px / 不渲染 logo / 看板仍渲染 logo）。
+
+---
+
 ## 六、开源发布前待办（2026-09-10 v1.4.0 校准）
 
 ### 🔎 「自动判定」现状（2026-09-10 在本机实测；v1.4.0 补上最后一块短板，被问到时照这个答）

@@ -78,7 +78,12 @@ T.showSubagentTip(element(),'子代理 审计\n自身消耗 $1.00\n模型 gpt\nI
 const tip=doc.body.children.at(-1);assert.equal(tip.children[0].textContent,'子代理 审计');assert.equal(tip.children[1].className,'dshadb_subtip_row')
 assert.match(source,/body\[data-ds-dark-theme\]/);assert.match(source,/background-size:5px 5px!important/)
 assert.ok(!source.includes('timer = setTimeout(() => { timer = 0; fired = true;'))
-assert.match(source,/margin:-12px auto 0/)
+// v1.8.0: 负 margin-top 已彻底归零。-12/-8/-4px 全都试过, 全是错位 —— 宿主 dock(DSH NEXT 实测)是
+// align-items:center 的**单行** flex, 本插件胶囊与宿主统计药丸(data-composer-stat, 总高 22px)排在同
+// 一条行里, 负 margin-top 会把胶囊在居中的行里再往上拽 → 上沿顶到输入框、下沿却与别人齐平。
+// 维护者两次截图反馈的都是这一件事(「稍微向上偏移」→「上半部分还是紧贴着输入框」)。
+assert.match(source,/\.dshadb_barwrap\{[^}]*margin:0 auto 0/)
+assert.ok(!/\.dshadb_barwrap\{[^}]*margin:-/.test(source), '不得给 barwrap 配负 margin-top(那正是向上偏移的成因)')
 
 const home=fs.mkdtempSync(path.join(os.tmpdir(),'dshadb-ui170-'));const old=process.env.DSH_HOME;process.env.DSH_HOME=home
 try {
@@ -96,6 +101,11 @@ try {
  assert.equal(JSON.parse(fs.readFileSync(path.join(home,'dsh-api-dashboard.json'),'utf8')).whaleSettings.scale,1.8)
  const configRoute=routes.find(r=>r.path==='/api-dashboard/config');r=res();await configRoute.handler({...req({showSubagentCapsules:false}),method:'POST'},r)
  assert.equal(JSON.parse(fs.readFileSync(path.join(home,'dsh-api-dashboard.json'),'utf8')).showSubagentCapsules,false)
+// v1.8.0: 「本会话消耗」尾巴开关。走的是同一条纯开关链路, 但**默认 false**(与 showPlan 相反),
+// 且必须进 toggleFields 白名单 + 落盘 —— 少任何一处都会出现「面板里能开、重启后回默认」。
+r=res();await configRoute.handler({...req({showSessionCost:true}),method:'POST'},r)
+assert.equal(r.body.showSessionCost,true,'toggle 路由必须原样回显')
+assert.equal(JSON.parse(fs.readFileSync(path.join(home,'dsh-api-dashboard.json'),'utf8')).showSessionCost,true,'开关必须落盘')
  const blocker=path.join(home,'dsh-api-dashboard.json.tmp');fs.mkdirSync(blocker)
  r=res();await route.handler(req({scale:2.3}),r);assert.equal(r.code,500,'写盘失败必须报错')
  r=res();await route.handler({method:'GET'},r);assert.equal(r.body.settings.scale,1.8,'写盘失败不提交runtime')
