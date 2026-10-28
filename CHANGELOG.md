@@ -4,6 +4,40 @@
 
 ## v1.x
 
+- **v1.9.1** — **修账号来源的 DeepSeek 显示「DeepSeek ——」；峰谷徽标去掉外部套圈**（v1.9.0 两条真机反馈的后续）。
+
+  **① 账号登录的 DeepSeek 模型现在也显示余额 + 低谷标记。**
+  维护者原话：「我当前在用的是 deepseek 账号登录的模型, 现在底下显示的是『DeepSeek ——』,
+  并且没有显示高峰还是低谷…但是我换成 APIKEY 的那个 DeepSeek 就正常显示」。
+  - 根因：`isRelayProvider(provider)` 的老三层判定（用户显式名单 → 服务端按 baseURL 域名 → `-official` 后缀）
+    **全部按 provider 名字找素材**，而宿主内置的账号 provider id 固定是 `deepseek-account`
+    （读 app.asar 的 ModelDirectory/optionsOf 实证）—— 账号登录**不写进用户的 settings.yaml**，
+    三层全落空 → 按中转站处理 → 金额显示「—」，峰谷标记又被「余额没出来就不显示」挡住 → 「DeepSeek ——」。
+  - 修法：新增**第 0 层** `HOST_BUILTIN_OFFICIAL = ["deepseek-account", "deepseek-official"]`
+    （账号登录 / 官方直连），命中即判官方。**不覆盖服务端明确的 `relay` 判定** ——
+    万一用户把自己的中转站命名成与内置 id 同名，以用户自己的配置为准（红线：不显示别家余额）。
+  - ⚠️ 账号来源显示的余额 = **用户自己配的 DeepSeek API Key 的余额**，与账号余额是**两个钱包**；
+    插件拿不到账号 token 的余额接口。拿不到 key 时预设返回 no-key，不造假数字。
+
+  **② 峰谷徽标「高峰/低谷」去掉外部套圈（背景/边框/圆角/padding），只留彩色裸文字。**
+  维护者原话「这个高峰和低谷的文字, 不要在外面有一个圈」。同排的平台名/金额都是裸文字，
+  多一个描边胶囊在这条 22px 的小条里反而最扎眼。字重 700 → 600（裸文字再压一档），字号 10 → 11px。
+
+  **③ 模型切换的信号源从 1 路扩成 4 路兜底（顺手修的同一类问题）。**
+  v1.9.0 的即时信号只认 `slots.inject(sessionId)` 递进来的 modelStore；实测切到 step 模型后
+  状态条仍显示「DeepSeek ¥54.18」—— 选中项根本没切（那条链依赖 session binding，拿不到就一次都不变）。
+  现在按「目录 store.current → `modelSelection` 投影 next → 投影 lastUsed → `queryBalanceCost` 投影」四路兜底，
+  并**合并成一个 effect**（旧的 `cost.currentModel` effect 会按「上一条请求用过的模型」切，
+  与按「输入框当前选中」的那份互相打架）。`modelSelection` 投影就是宿主模型选择器自己在读的那个
+  （asar 实证：`current = projected.next ?? catalog.value.default`）。
+
+  **回归钉子**：`test/test-bar.mjs` 新增 11 条（第 0 层白名单 / 不覆盖明确 relay 判定 /
+  账号来源能显示金额 / 四路兜底源码级 / `useProjection("modelSelection")` / 只有一个 effect 且无 `lastLinkedModel` /
+  峰谷与切换共用 `curModel` / 徽标无背景边框圆角 padding）→ **146 通过**；
+  `test/test-official.mjs` 补 L0 两条 → 23 通过。全量 35 个 `test-*.mjs` 仍只有 3 个环境性失败
+  （与 pristine HEAD 相同：`test-v020-compat.mjs` 缺 `@deepseek-ai/dsh-app-boot`、`test-v141-fixes.mjs`
+  spawnSync node/tar EPERM、`test-v170-update.mjs` 的 `runtimeVersion` 随本机 DSH 版本变）。
+
 - **v1.9.0** — **状态条选中项改由「provider + 模型」共同决定；峰谷徽标 ☀️🌙 换成汉字「高峰/低谷」**（真机反馈两条）。
 
   **① 经中转站用模型时，状态条不再显示成官方平台 +「—」。**

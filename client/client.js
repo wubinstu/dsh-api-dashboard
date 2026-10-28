@@ -301,12 +301,15 @@ window.__ModuleLoader__.load({
 .dshadb_bar_dot_ok{background:#35b56b}
 .dshadb_bar_dot_warn{background:#e6a72f}
 .dshadb_bar_dot_err{background:#e05252}
-.dshadb_bar_peak{font-size:10px;padding:1px 6px;border-radius:999px;font-weight:700;flex:0 0 auto;line-height:14px}
-/* v1.9.0: ☀️🌙 → 汉字「高峰/低谷」。配色与状态条金额的三色同一套语义:
-   红 = 高峰(全价, .dshadb_bar_err 的 #d8443f), 绿 = 低谷(5 折, .dshadb_bar_ok 的 #2e9e5b)。
-   ⚠️ padding 上下只留 1px: 胶囊 min-height 是 22px, 徽标总高 10+2+2+14 行高内不能超它。 */
-.dshadb_bar_peak.peak{background:rgba(216,68,63,0.10);color:#d8443f;border:1px solid rgba(216,68,63,0.20)}
-.dshadb_bar_peak.valley{background:rgba(46,158,91,0.10);color:#2e9e5b;border:1px solid rgba(46,158,91,0.18)}
+/* v1.9.1: 去掉外部套圈(背景/边框/圆角/padding), 只留彩色裸文字 —— 维护者 2026-10-28
+   反馈「这个高峰和低谷的文字, 不要在外面有一个圈」。同排的平台名/金额都是裸文字,
+   多一个描边胶囊在这条 22px 的小条里反而最扎眼。
+   配色沿用状态条金额的三色语义: 红 = 高峰(#d8443f = .dshadb_bar_err),
+   绿 = 低谷(#2e9e5b = .dshadb_bar_ok)。11px 与 .dshadb_bar 的 font-size 对齐,
+   字重 700 → 600: 裸文字再压一档, 与 400 的平台名/金额差得不太多。 */
+.dshadb_bar_peak{font-size:11px;font-weight:600;flex:0 0 auto;line-height:14px}
+.dshadb_bar_peak.peak{color:#d8443f}
+.dshadb_bar_peak.valley{color:#2e9e5b}
 
 /* ===== 遮罩 ===== */
 .dshadb_scrim{position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,0.35);overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
@@ -1451,15 +1454,38 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
     /** 当前 provider 是否为中转站 (非官方直连) —— 中转站无余额接口, 金额显示「—」
      *
      *  三层判定, 优先级由高到低 (与服务端注释一致):
+     *   0) 宿主内置 provider id —— **账号登录/官方直连**, 都不是中转站 (v1.9.1 新增)
      *   1) 用户在设置里显式声明的官方直连名单 config.officialProviders (兜住一切误判)
      *   2) 服务端读 settings.yaml 按 baseURL **域名** 判定的 config.providerKinds
      *      (官方域名白名单命中→official, 不命中→relay; 没写 baseURL 的 provider 不在表里)
      *   3) DSH 官方插件命名约定: `-official` / `_official` 后缀 (如 deepseek-official)
      *  都不命中 → 按中转站处理。保守取向: 宁可不显示余额, 也不显示错的余额。
      *  (provider 为空表示还不知道走哪条路 → 不判中转站, 照常显示所选平台余额) */
+    // v1.9.1: 宿主内置 provider id 白名单 (读 app.asar 的 ModelDirectory/optionsOf 实证)。
+    // 账号登录(deepseek-account)与官方直连(deepseek-official)**不写进用户的 settings.yaml**
+    // —— 账号登录压根不产生 provider 条目, 于是第 1/2 层全部落空, 旧代码按中转站处理,
+    // 状态条金额显示「—」、峰谷标记也被 isNoBalance 挡掉。
+    // 维护者 2026-10-28 实测: 账号来源的 DeepSeek 模型显示「DeepSeek ——」且无高峰/低谷,
+    // 而同一把模型换成 APIKEY 来源就正常 —— 差别只在 provider id。
+    // ⚠️ 只放「确定是官方」的宿主内置 id; 拿不准的一律不放(不列只是不显示余额, 列错会显示别家余额)。
+    // ⚠️ 账号来源显示的余额 = 用户自己配的 DeepSeek API Key 的余额(**与账号余额是两个钱包**,
+    //    插件拿不到账号 token 的余额接口)。拿不到 key 时预设会返回 no-key, 不会造假数字。
+    const HOST_BUILTIN_OFFICIAL = ["deepseek-account", "deepseek-official"];
     function isRelayProvider(provider, config) {
       if (typeof provider !== "string" || provider === "") return false;
       const p = provider.toLowerCase();
+      const kinds = config && config.providerKinds && typeof config.providerKinds === "object" ? config.providerKinds : null;
+      // 查 provider 名(原样优先, 再小写)对应的判定; 没有表/没有这一条时返回空串
+      const kindOf = (name) => {
+        if (!kinds) return "";
+        if (kinds[name] !== undefined) return kinds[name];
+        if (kinds[p] !== undefined) return kinds[p];
+        return "";
+      };
+      // 第 0 层: 宿主内置 provider (账号登录 / 官方直连)
+      // 不覆盖「服务端明确判成 relay」的情况: 万一用户把自己的中转站命名成与内置 id
+      // 同名(如 deepseek-account), 以用户自己的配置为准 —— 否则会把别家余额显示成官方余额。
+      if (HOST_BUILTIN_OFFICIAL.indexOf(p) !== -1 && kindOf(provider) !== "relay") return false;
       // 第 1 层: 用户显式名单
       const official = config && config.officialProviders;
       if (Array.isArray(official)) {
@@ -1468,12 +1494,9 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
         }
       }
       // 第 2 层: 服务端按 baseURL 域名判定
-      const kinds = config && config.providerKinds;
-      if (kinds && typeof kinds === "object") {
-        const kind = kinds[provider] !== undefined ? kinds[provider] : kinds[p];
-        if (kind === "official") return false;
-        if (kind === "relay") return true;
-      }
+      const kind = kindOf(provider);
+      if (kind === "official") return false;
+      if (kind === "relay") return true;
       // 第 3 层: 官方插件后缀约定
       if (p.endsWith("-official") || p.endsWith("_official")) return false;
       return true;
@@ -3918,6 +3941,15 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
           const modelStore = props.modelStore;
           // 本会话消耗 (参考 dsh-balance: 无条件读取投影, 放在组件顶部保证 hooks 顺序)
           const cost = useProjection ? useProjection("queryBalanceCost") : undefined;
+          // v1.9.1: 模型选择的即时信号 —— next = 输入框里当前选中的模型, lastUsed = 上一条
+          // 请求用过的模型。宿主自己的模型选择器(ModelDirectory)渲染的就是这个投影
+          // (asar 实证: syncInputs 里 current = projected.next ?? catalog.value.default),
+          // 所以它比 slots.inject 递进来的 modelStore 更可靠 —— 后者依赖 slot 的
+          // inject(sessionId) 能不能拿到 session binding, 拿不到就整条信号是死的。
+          // 维护者 2026-10-28 实测(只认 modelStore 的 v1.9.0): 切到 step 模型后状态条
+          // 仍显示「DeepSeek ¥54.18」—— 选中项没跟着切, 因为信号一次都没变过。
+          // 拿不到投影时返回 undefined, 由调用方走 modelStore / cost 兜底, 不会抛。
+          const modelSel = useProjection ? useProjection("modelSelection") : undefined;
           const [view, setView] = react.useState("bar");
           const [isSettingsOpen, setSettingsOpen] = react.useState(false);
           const [settingsSection, setSettingsSection] = react.useState("basic");
@@ -3988,30 +4020,35 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
           const modelDirSub = modelStore && typeof modelStore.subscribe === "function" ? modelStore.subscribe : () => () => {};
           const modelDirSnap = modelStore && typeof modelStore.getSnapshot === "function" ? modelStore.getSnapshot : () => void 0;
           const modelDirState = react.useSyncExternalStore(modelDirSub, modelDirSnap, modelDirSnap);
-          const modelDirModel = modelDirState?.current?.model;
-          const modelDirProvider = modelDirState?.current?.provider;
-          // 当前 provider: 模型目录优先(切换瞬间就更新), 投影兜底
-          const curProvider = modelDirProvider || (cost && cost.currentProvider) || "";
+          const dirCur = modelDirState && modelDirState.current ? modelDirState.current : null;
+          // v1.9.1: 四路兜底解析「现在到底在用哪个 provider / 模型」, 任一路变化都重新解析:
+          //   ① 目录 store.current (= 投影 next ?? 目录默认值, 与宿主模型选择器同源)
+          //   ② 投影 next      (输入框当前选择, 最即时)
+          //   ③ 投影 lastUsed  (上一条请求用过的, 跨刷新仍在)
+          //   ④ queryBalanceCost 投影的 currentModel / currentProvider (最后的兜底)
+          // 为什么不能只留 ①: modelStore 要靠 slot 的 inject(sessionId) 递进来, 那条链断了
+          // (session binding 拿不到 / ctx.modelDirectories 不在)就一次都不会变。
+          const selNext = (modelSel && modelSel.next) || null;
+          const selLast = (modelSel && modelSel.lastUsed) || null;
+          const curProvider = (dirCur && dirCur.provider) || (selNext && selNext.provider) || (selLast && selLast.provider) || (cost && cost.currentProvider) || "";
+          const curModel = (dirCur && dirCur.model) || (selNext && selNext.model) || (selLast && selLast.model) || (cost && cost.currentModel) || "";
           const [didModelDir, setDidModelDir] = react.useState(false);
-          // v1.9.0: 依赖里加 curProvider —— 只在中转站里换 provider(模型不变)时也要跟着切,
+          // v1.9.0: 依赖里加 provider —— 只在中转站里换 provider(模型不变)时也要跟着切,
           // 否则状态条还停在上一个中转站。didModelDir 那道"首帧跳过"保留:
-          // 模型目录第一次给值时往往还是默认模型, 不该覆盖用户上次手动选的平台。
+          // 信号第一次给值时往往还是目录默认模型, 不该覆盖用户上次手动选的平台。
+          // v1.9.1: 依赖从 modelDirModel 换成 curModel —— 见上面四路兜底的说明。
           react.useEffect(() => {
-            const m = modelDirModel;
-            if (!m) return;
+            if (!curModel) return;
             if (!didModelDir) { setDidModelDir(true); return; }
-            applyModelToPlatform(m, curProvider);
-          }, [modelDirModel, didModelDir, curProvider]);
+            applyModelToPlatform(curModel, curProvider);
+          }, [curModel, didModelDir, curProvider]);
 
           // v0.5.3: 自动联动 — 会话当前模型变化时, 输入框下方平台跟着切换
           // 仅在模型实际变化时触发一次, 用户手动选择的平台不会被后续渲染覆盖
-          const [lastLinkedModel, setLastLinkedModel] = react.useState(null);
-          react.useEffect(() => {
-            const m = cost && cost.currentModel;
-            if (!m || typeof m !== "string" || m === lastLinkedModel) return;
-            setLastLinkedModel(m);
-            applyModelToPlatform(m, curProvider);
-          }, [cost && cost.currentModel, curProvider]);
+          // v1.9.1: **已并入上面那个统一 effect** —— 上面四路兜底的最后一路就是
+          // cost.currentModel。这里不能再单独留一份: 目录/投影活着时, 上面那个 effect
+          // 按「输入框里选中的模型」切, 而这一份按「上一条请求用过的模型」切, 两者
+          // 不一致时状态条会来回跳(实测: 输入框停在 step 模型, 这条把平台拽回 DeepSeek)。
           const currentModel = cost && cost.currentModel;
           const openList = () => setView("list");
           const openDetail = (id) => { setDetailId(id); setView("detail"); };
@@ -4059,7 +4096,9 @@ const openSettings = (section) => { setSettingsSection(section || "basic"); setS
               // v1.8.1: 峰谷标记按**输入框里当前选中的模型**算 —— 模型目录 store 是即时信号
               // (与 applyModelToPlatform 同源, 切模型瞬间就更新), 投影的 cost.currentModel
               // 是上一条消息用过的模型、有窗口期。目录还没建起来时用投影兜底。
-              peakModel: modelDirModel || (cost && cost.currentModel) || "", key: "bar" }),
+              // v1.9.1: 改成与 applyModelToPlatform 完全同一个 curModel(四路兜底解析),
+              // 不再单独念 modelDirModel —— 否则两条路各信一个信号, 又会不一致。
+              peakModel: curModel, key: "bar" }),
               view === "list" ? react.createElement(DashboardDrawer, { isOpen: true, onClose: closeList, t, selectedId, onSelect: handleSelect, onOpenDetail: (id) => { setDetailId(id); setView("detail"); }, onAddRelay: () => openSettings("relays"), onAddCustom: () => openSettings("models"), onOpenSettings: (sec) => openSettings(typeof sec === "string" ? sec : "basic"), config, currentModel, subagentCost: cost,
               today: (cost && cost.todayTokens) ? { tokens: cost.todayTokens, byCurrency: cost.todayByCurrency || {}, byModel: cost.todayByModel || {} } : null,
               key: "drawer" }) : null,

@@ -279,7 +279,7 @@ a('峰谷模型前缀表与 src/index.js 的 phaseOfModel 一致(改一边会红
       && list.every(p => cond.includes("model.startsWith('" + p + "')"))
   })())
 a('状态条传给 BarReadout 的是 peakModel, 不是旧的 peakValley',
-  /peakModel: modelDirModel \|\| \(cost && cost\.currentModel\) \|\| ""/.test(src))
+  /peakModel: curModel/.test(src))
 // isPeakValleyModel 真值表(不只是正则): 前缀匹配, deepseek-v4-flash-vision-exp 与 deepseek-flash 同价
 a('isPeakValleyModel: deepseek-v4 / deepseek-flash 系为 true',
   T.isPeakValleyModel('deepseek-v4-pro') === true && T.isPeakValleyModel('deepseek-flash') === true
@@ -326,11 +326,39 @@ a('entryForProviderModel: balances 不是数组 / 空数组时不炸, 回落模�
 a('entryForProviderModel: provider 与模型都对不上时返回空串(调用方兜底, 这里不猜)',
   T.entryForProviderModel('nowhere', 'totally-unknown-model', RELAY_BAL) === '')
 a('自动切换现在把 provider 传进 applyModelToPlatform(以前只传模型)',
-  /applyModelToPlatform\(m, curProvider\)/.test(src)
+  /applyModelToPlatform\(curModel, curProvider\)/.test(src)
   && /applyModelToPlatform = react\.useCallback\(\(m, prov\) =>/.test(src))
-a('自动切换的两个 effect 都依赖 curProvider(只换 provider 不换模型也要跟着切)',
-  /\}, \[modelDirModel, didModelDir, curProvider\]\);/.test(src)
-  && /\}, \[cost && cost\.currentModel, curProvider\]\);/.test(src))
+// v1.9.1: 四条信号源合成一个 curModel / curProvider, 只保留**一个**自动切换 effect。
+// 维护者 2026-10-28 实测(v1.9.0): 只认 slots.inject 递来的 modelStore 时, 切到 step 模型
+// 状态条仍显示「DeepSeek ¥54.18」—— 信号一次都没变过; 而旧的 cost.currentModel effect
+// 又会把平台拽回「上一条请求用过的模型」, 两个 effect 互相打架。
+a('v1.9.1: 四路兜底解析 curModel(目录 store → 投影 next → 投影 lastUsed → cost 投影)',
+  /const curProvider = \(dirCur && dirCur\.provider\) \|\| \(selNext && selNext\.provider\)/.test(src)
+  && /\(selLast && selLast\.provider\) \|\| \(cost && cost\.currentProvider\)/.test(src)
+  && /const curModel = \(dirCur && dirCur\.model\) \|\| \(selNext && selNext\.model\)/.test(src)
+  && /\(selLast && selLast\.model\) \|\| \(cost && cost\.currentModel\)/.test(src))
+a('v1.9.1: 订阅 modelSelection 投影(宿主模型选择器同源, 比 inject 的 modelStore 可靠)',
+  /const modelSel = useProjection \? useProjection\("modelSelection"\) : undefined;/.test(src))
+a('v1.9.1: 自动切换只有一个 effect, 依赖 [curModel, didModelDir, curProvider]',
+  /\}, \[curModel, didModelDir, curProvider\]\);/.test(src)
+  && !/lastLinkedModel/.test(src)
+  && !/\}, \[cost && cost\.currentModel, curProvider\]\);/.test(src))
+a('v1.9.1: 峰谷标记与自动切换共用同一个 curModel(不再各信一个信号)',
+  /peakModel: curModel/.test(src))
+a('v1.9.1: isRelayProvider 第 0 层 —— 宿主内置账号/官方 provider 不算中转站',
+  T.isRelayProvider('deepseek-account') === false
+  && T.isRelayProvider('DEEPSEEK-ACCOUNT', {}) === false
+  && T.isRelayProvider('deepseek-account', { providerKinds: { zhipu: 'official' } }) === false
+  && T.isRelayProvider('deepseek-official') === false)
+a('v1.9.1: 第 0 层不覆盖服务端明确的 relay 判定(用户中转站撞名内置 id 时以用户配置为准)',
+  T.isRelayProvider('deepseek-account', { providerKinds: { 'deepseek-account': 'relay' } }) === true
+  && T.isRelayProvider('deepseek-official', { providerKinds: { 'deepseek-official': 'relay' } }) === true)
+a('v1.9.1: 账号来源的 DeepSeek 模型现在能显示金额(以前 provider 名没素材 → 判中转站 → —)',
+  (() => {
+    const bal = { id: 'p1', platform: 'deepseek', category: '国内', status: 'ok', total: 44.33, currency: 'CNY' };
+    const t = (k) => k;
+    return T.barAmountText(bal, t, T.isRelayProvider('deepseek-account', {})) !== '—';
+  })())
 a('BarReadout 选中项没有对应条目时按同一解析器兜底(不再退化成第一个 ok 的)',
   /const pid = entryForProviderModel\(provider, peakModel, balances\);/.test(src))
 // 峰谷徽标: ☀️🌙 → 汉字「高峰/低谷」, 红/绿
@@ -338,6 +366,13 @@ a('峰谷徽标改成汉字: 高峰(红) / 低谷(绿)',
   /isPeak \? t\("peak\.label"\) : t\("valley\.label"\)/.test(src))
 a('峰谷徽标配色与金额三色同一套: 高峰 #d8443f(err 红) / 低谷 #2e9e5b(ok 绿)',
   /\.dshadb_bar_peak\.peak\{[^}]*color:#d8443f/.test(src) && /\.dshadb_bar_peak\.valley\{[^}]*color:#2e9e5b/.test(src))
+// v1.9.1: 去掉外部套圈(背景/边框/圆角/padding), 只留彩色裸文字 —— 维护者反馈
+// 「这个高峰和低谷的文字, 不要在外面有一个圈」。
+a('v1.9.1: 峰谷徽标是裸文字, 不再有背景/边框/圆角/padding',
+  /\.dshadb_bar_peak\{font-size:11px;font-weight:600;flex:0 0 auto;line-height:14px\}/.test(src)
+  && !/\.dshadb_bar_peak\{[^}]*(background|border|padding|border-radius)/.test(src)
+  && !/\.dshadb_bar_peak\.peak\{[^}]*(background|border|padding|border-radius)/.test(src)
+  && !/\.dshadb_bar_peak\.valley\{[^}]*(background|border|padding|border-radius)/.test(src))
 a('状态条峰谷徽标不再用 ☀️🌙 emoji(字体不稳会撑高胶囊; 看板详情卡仍可用)',
   /dshadb_bar_peak " \+ \(isPeak \? "peak" : "valley"\)[\s\S]{0,200}?isPeak \? t\("peak\.label"\) : t\("valley\.label"\)/.test(src)
   && !/createElement\("span", \{[\s\S]{0,200}?dshadb_bar_peak[\s\S]{0,300}?\}, [^;]*☀️/.test(src))

@@ -24,12 +24,22 @@ let pass=0,fail=0
 const a=(n,c)=>{if(c){pass++}else{fail++;console.log('FAIL '+n)}}
 const t=(k)=>k
 
-// ==== 三层 provider 判定 (开源化改造后) ====
+// ==== 四层 provider 判定 (开源化改造后; v1.9.1 加第 0 层) ====
 // 服务端下发的判定素材: providerKinds 来自 settings.yaml 的 baseURL 域名比对
 const cfg = {
   officialProviders: ['myofficial', 'DS-CN'],
   providerKinds: { zhipu:'official', 'relay-one':'relay', 'relay-two':'relay', 'relay-three':'relay' },
 }
+
+// 第 0 层 (v1.9.1): 宿主内置 provider id —— 账号登录 / 官方直连, 都不写进用户 settings.yaml,
+// 于是老三层全部落空、被当成中转站 → 状态条显示「—」。维护者 2026-10-28 实测:
+// 账号来源的 DeepSeek 模型显示「DeepSeek ——」且无高峰/低谷, 换成 APIKEY 来源就正常。
+a('L0 deepseek-account(账号登录) 是官方, 且不需要任何判定素材',
+  T.isRelayProvider('deepseek-account') === false
+  && T.isRelayProvider('deepseek-account', {}) === false
+  && T.isRelayProvider('DEEPSEEK-ACCOUNT', cfg) === false)
+a('L0 不覆盖服务端明确的 relay 判定(用户中转站撞名内置 id 时以用户配置为准)',
+  T.isRelayProvider('deepseek-account', { providerKinds: { 'deepseek-account': 'relay' } }) === true)
 
 // 第 1 层: 用户显式名单 (最高优先级, 覆盖后缀规则与自动判定)
 a('L1 用户名单 myofficial 是官方', T.isRelayProvider('myofficial', cfg)===false)

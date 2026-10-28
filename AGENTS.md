@@ -542,6 +542,34 @@ v1.8.1 的三道闸门全都不设上限：schema `.min(0)`、消毒表 `[0, MAX
 ⚠️ `PEAK_VALLEY_PREFIXES` 只管「这个模型有没有峰谷价」，**不管**该显示哪个平台条目
 （那是 `entryForProviderModel` 的事）；已退役的 `deepseek-chat` / `reasoner` 没有峰谷价 → false。
 
+### v1.9.1 补的三件事（改状态条判定/信号前必读）
+
+**① `isRelayProvider` 新增第 0 层：宿主内置 provider id 白名单 `HOST_BUILTIN_OFFICIAL = ["deepseek-account","deepseek-official"]`。**
+真机反馈：「我当前在用的是 deepseek 账号登录的模型, 现在底下显示的是『DeepSeek ——』, 并且没有显示高峰还是低谷…
+但是我换成 APIKEY 的那个 DeepSeek 就正常显示」。根因：老三层判定**全部按 provider 名字找素材**，
+而宿主内置的账号 provider id 固定 `deepseek-account`（读 app.asar 的 ModelDirectory/`optionsOf` 实证：
+分组 id 就是 provider 名，账号组 `group.id === "deepseek-account" ? t("provider.account") : group.name`）——
+**账号登录不写进用户的 settings.yaml**，三层全落空 → 判中转站 → 金额「—」+ 峰谷被 `!isNoBalance` 挡住。
+- **不覆盖服务端明确的 `relay` 判定**（`kindOf(provider) === "relay"` 时第 0 层让路）：
+  万一用户把自己的中转站命名成与内置 id 同名，以用户自己的配置为准 —— 否则会把别家余额显示成官方余额（红线）。
+- ⚠️ 账号来源显示的余额 = **用户自己配的 DeepSeek API Key 的余额**，与账号余额是**两个钱包**，
+  插件拿不到账号 token 的余额接口；拿不到 key 时预设返回 no-key，不造假数字。**别去改这里「顺便显示账号余额」**。
+- 模型目录 store 快照 `{groups, current, ...}`、`current = {provider: group.id, model, reasoningEffort?}`，
+  **没有 source/auth 字段** —— 账号 vs APIKEY 只能靠 provider id 区分，别指望有更「干净」的信号。
+
+**② 模型切换信号扩成四路兜底 + 合并成一个 effect（取代上面「两个信号」的写法）。**
+`curModel`/`curProvider` = 目录 store.current → `modelSelection` 投影 `next` → 投影 `lastUsed` → `queryBalanceCost` 投影。
+只认 `slots.inject(sessionId)` 递来的 modelStore 是不够的（那条链依赖 session binding，拿不到就一次都不变；
+实测切到 step 模型状态条仍显示「DeepSeek ¥54.18」）。`modelSelection` 投影就是宿主模型选择器自己在读的那个
+（asar 实证：`current = projected.next ?? catalog.value.default`）。
+旧的 `cost.currentModel` effect **已删除**：它按「上一条请求用过的模型」切，与按「输入框当前选中」的那份
+会互相打架（输入框停在 step 模型，它把平台拽回 DeepSeek）。`peakModel` 也用同一个 `curModel`，
+**别让两条路各信一个信号**。
+
+**③ 峰谷徽标去掉外部套圈**：`background`/`border`/`border-radius`/`padding` 全删，只留彩色裸文字
+（peak `#d8443f` / valley `#2e9e5b`），字重 700→600、字号 10→11px。维护者原话「不要在外面有一个圈」。
+同排的平台名/金额都是裸文字，多一个描边胶囊在 22px 小条里反而最扎眼。
+
 ### 回归钉子
 
 `test/test-bar.mjs`：`RELAY_BAL` 夹具 + 8 条 `entryForProviderModel` 断言 + 2 条源码级
