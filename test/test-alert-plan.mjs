@@ -68,7 +68,9 @@ a('C7 服务端有 /api-dashboard/alerts/test 路由', srv.includes("path: '/api
 a('C8 服务端 alerts 响应含 skipped(不能混进 sent)', /skipped:\s*alertStatus\.skipped/.test(srv))
 a('C9 服务端前台跳过改发 App 内提示', srv.includes('ALERT_BRIDGE_TOAST') && srv.includes("first.kind === 'foreground-skip'"))
 a('C10 alertState 已登记进持久化形状消毒表', /OBJECT_FIELDS = \[[^\]]*'alertState'/.test(srv))
-a('C11 alertRepeatHours 已登记进数字字段消毒表', /NUMBER_FIELDS[\s\S]{0,600}'alertRepeatHours'/.test(srv))
+// ⚠️ 窗口 600 → 800: v1.8.2 在 NUMBER_FIELDS 里插了 planSafe/planWarn 两条带注释的条目,
+// 把 alertRepeatHours 推远了。这里钉的是「登记在表里」, 不是距离, 别再顺手调小回去。
+a('C11 alertRepeatHours 已登记进数字字段消毒表', /NUMBER_FIELDS[\s\S]{0,800}'alertRepeatHours'/.test(srv))
 // v1.6.9: 「接口没打到」和「投递失败」必须分开报 —— 前者是插件文件已更新、dsh 还没重启
 // （服务端仍是旧版本, 那个路由根本不存在）, 后者才是通知发不出去要去查系统权限。
 a('C12 客户端区分「没打到接口」与「投递失败」', cli.includes('settings.alertTestStale') && /if \(!d\) setAlertTest\("stale"\)/.test(cli) && /r\.status === 404 \? "stale"/.test(cli))

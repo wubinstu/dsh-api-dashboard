@@ -286,8 +286,10 @@ window.__ModuleLoader__.load({
    ⚠️ 想微调高度只改 min-height 这一个值; 别改回 28px, 也别配负 margin。 */
 .dshadb_bar{display:inline-flex;align-items:center;gap:5px;font-size:11px;min-height:22px;box-sizing:border-box;padding:1px 10px 1px 8px;border-radius:10px;background:var(--dshadb-panel,#f5f6f8);border:1px solid var(--dshadb-border,#e7e8ec);color:var(--dshadb-muted,#777b84);cursor:pointer;white-space:nowrap;user-select:none;-webkit-tap-highlight-color:transparent}
 .dshadb_bar:active{opacity:0.8}
-.dshadb_bar_name{font-weight:700;color:var(--dshadb-text,#17181c);font-size:11px}
-.dshadb_bar_amount{font-weight:800;font-variant-numeric:tabular-nums;color:var(--dshadb-text,#17181c)}
+.dshadb_bar_name{font-weight:400;color:var(--dshadb-text,#17181c);font-size:11px}
+.dshadb_bar_amount{font-weight:400;font-variant-numeric:tabular-nums;color:var(--dshadb-text,#17181c)}
+/* v1.8.2: 平台名/金额去粗(见下方说明)。套餐 chip 以前没写 font-weight,
+   继承的是浏览器默认 400 —— 现在与宿主同排文字同重量级, 保持 400 不变。 */
 /* C-4a (v1.4.1): .dshadb_bar_ok/warn/err 以前只有使用处、没有 CSS 规则(死类名),
    于是"负余额/低余额金额变红"从来没生效过, 只有小圆点变色。
    v1.8.1: 补 .dshadb_bar_na(查不到余额的灰色档) —— 状态点删除后, 灰色只能由文字承担。 */
@@ -577,7 +579,14 @@ body:has(.dshadb_scrim) [class*="sidebarCol"]{border-right-color:transparent !im
    -webkit-touch-callout:none 抑制系统菜单, 详情改由 pointerdown 计时器弹浮层,
    见 bindSubagentTip()。浮层必须挂在 document.body 上 —— 挂在胶囊里会被
    .dshadb_subs 的 overflow-x:auto 裁掉。
-   ⚠️ 本段在 JS 模板字符串里, 注释里**不能出现反引号**(会提前结束模板串)。 */
+   ⚠️ 本段在 JS 模板字符串里, 注释里**不能出现反引号**(会提前结束模板串)。
+   v1.8.2: 状态条的平台名与余额金额都改成 font-weight:400 —— 维护者反馈
+   「¥44.33 这个字体是不是加粗了, 包括前面的"阶跃星辰"汉字好像也是」。
+   实测确实是: 旧值 700/800 与同排宿主统计药丸(K-8v-a_anchor 之类)的 400
+   不在一个重量级, 数字还带 letter-spacing 差异, 看起来像"飘"在别人上面。
+   现在与宿主同排文字同一粗细, 视觉上才是一条基线。
+   注意只改状态条这一处: 看板卡片/详情页的数字仍是粗的(那里空间大、要层级),
+   AGENTS.md 铁律 4「改 UI 结构要克制」, 别顺手全表改一遍。 */
 /* UI v1.4.1（按维护者反馈改）：**不再把两行塞进一个容器** —— 余额条恢复成独立的药丸，
    整块（余额条 + 子代理行）**水平居中**：wrap 用 fit-content + margin:auto，
    子项 align-items:center，于是窄的时候两行都居中，宽的时候 wrap 撑到 100% 子代理行在内部横滑。 */
@@ -764,12 +773,10 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
       "detail.sessionCost": "本会话消耗", "detail.noBalance": "该平台未开放余额查询",
       "settings.safe": "安全阈值(绿)", "settings.warn": "预警阈值(黄)", "settings.currency": "计价货币",
       "settings.overseasCurrency": "海外模型计价", "settings.overseasFollow": "跟随主货币", "settings.overseasHint": "海外厂商官方价本就是美元, 选美元可免去 ×7 折算误差",
-      "settings.safeHint": "余额高于此值显示绿色(安全)",
-      "settings.warnHint": "余额低于此值显示黄色(偏低)，再低显示红",
-      "settings.planSafe": "套餐余量阈值(绿)",
-      "settings.planWarn": "套餐余量阈值(黄)",
-      "settings.planSafeHint": "订阅套餐剩余百分比不低于此值显示绿色。默认 30，与余额阈值是两把尺子",
-      "settings.planWarnHint": "低于此值显示黄色(偏低)，再低显示红。默认 10",
+      // v1.8.2: safeHint/warnHint 已删 —— 维护者反馈「上一个设置框的注释和下一个设置输入框的
+      // 标题放在一起很不清楚, 容易让人迷惑」。标签本身已带 (绿)/(黄), 注释是冗余。
+      "settings.planSafe": "套餐余量阈值百分比(绿)",
+      "settings.planWarn": "套餐余量阈值百分比(黄)",
       "settings.refresh": "刷新间隔(秒)", "settings.refreshHint": "1~60 秒，最高一分钟",
       "settings.save": "保存并生效", "settings.saved": "已保存",
       "update.title": "版本与更新", "update.current": "当前版本",
@@ -888,12 +895,8 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
       "detail.sessionCost": "Session cost", "detail.noBalance": "No balance API",
       "settings.safe": "Safe (green)", "settings.warn": "Warn (yellow)", "settings.currency": "Currency",
       "settings.overseasCurrency": "Overseas models", "settings.overseasFollow": "Follow main", "settings.overseasHint": "Overseas vendors price in USD; picking USD avoids the x7 conversion error",
-      "settings.safeHint": "Above this = green (safe)",
-      "settings.warnHint": "Below this = yellow, lower = red",
+      "settings.planSafe": "Plan left % (green)", "settings.planWarn": "Plan left % (yellow)",
       "settings.refresh": "Refresh (sec)", "settings.refreshHint": "1-60s, max one minute",
-      "settings.planSafe": "Plan left (green)", "settings.planWarn": "Plan left (yellow)",
-      "settings.planSafeHint": "Subscription quota left at or above this = green. Default 30; a separate ruler from the balance thresholds.",
-      "settings.planWarnHint": "Below this = yellow (low), lower = red. Default 10.",
       "settings.save": "Save", "settings.saved": "Saved",
       "update.title": "Version & Updates", "update.current": "Current",
       "update.check": "Check updates", "update.checking": "Checking…",
@@ -1574,6 +1577,15 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
       const n = Number(raw);
       if (!Number.isFinite(n)) return fallback;
       return Math.min(Math.max(n, min), max);
+    }
+    /**
+     * v1.8.2: 套餐余量阈值 —— 只收 0~100 的整数(它是个百分比, 不是金额)。
+     * 与 settleNumber 的分工: settleNumber 是通用夹取(不取整), 这里是「百分比专用」,
+     * 夹取的同时取整, 防止 12.5 / 1e3 这类值顺着 save() 溜进状态文件。
+     * 空串仍走 fallback(默认 30/10), 绝不是 0 —— 0 会把套餐永远判成红色。
+     */
+    function clampPlanPct(v, fallback) {
+      return Math.round(settleNumber(v, 0, 100, fallback));
     }
     function alertChannelState(info) {
       if (info === null || info === undefined) return "checking";
@@ -2532,9 +2544,11 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
         const nextWarn = settleNumber(warn, 0, 1e9, 10)
         setWarn(nextWarn)
         // v1.8.1: 套餐阈值空串回落 30/10 (不是 0! 0 会把套餐永远判成红色)
-        const nextPlanSafe = settleNumber(planSafe, 0, 1e9, 30)
+        // v1.8.2: 夹取范围从 1e9 收成 0~100 并取整 —— 它是个百分比, 与失焦那一侧必须同一把尺子
+        // (v1.8.1 的漏洞: 失焦夹 0~100、save 却放到 1e9, 程序化设值能绕过上限)
+        const nextPlanSafe = clampPlanPct(planSafe, 30)
         setPlanSafe(nextPlanSafe)
-        const nextPlanWarn = settleNumber(planWarn, 0, 1e9, 10)
+        const nextPlanWarn = clampPlanPct(planWarn, 10)
         setPlanWarn(nextPlanWarn)
         setSaving(true);
         try {
@@ -2687,28 +2701,25 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
           react.createElement("div", { key: "safe" }, [
             react.createElement("label", { className: "dshadb_label", key: "l1" }, t("settings.safe")),
             react.createElement("input", { className: "dshadb_field", type: "number", value: safe, onChange: (e) => setSafe(e.target.value), onBlur: (e) => setSafe(settleNumber(e.target.value, 0, 1e9, 50)), key: "i1" }),
-            react.createElement("span", { style: { fontSize: "10px", color: "var(--dsw-alias-label-tertiary)" }, key: "h1" }, t("settings.safeHint")),
           ]),
           react.createElement("div", { key: "warn" }, [
             react.createElement("label", { className: "dshadb_label", key: "l2" }, t("settings.warn")),
             react.createElement("input", { className: "dshadb_field", type: "number", value: warn, onChange: (e) => setWarn(e.target.value), onBlur: (e) => setWarn(settleNumber(e.target.value, 0, 1e9, 10)), key: "i2" }),
-            react.createElement("span", { style: { fontSize: "10px", color: "var(--dsw-alias-label-tertiary)" }, key: "h2" }, t("settings.warnHint")),
           ]),
         ]),
         // v1.8.1: 订阅套餐(Step Plan)余量的三色阈值 —— 与上面余额那对是两把尺子(默认 30/10)。
         // 维护者 2026-10-28: 「剩余 >=30% 为绿色, 否则剩余>=10%为黄色, 否则为红色」。
         // 放在全局而不是按厂商分: planView 视图与 planLevel() 都厂商中立, 以后别的平台
         // 有订阅时复用同一对字段(见 AGENTS.md 五quater)。
+        // v1.8.2: 只收 0~100 的整数(百分比); numberDraft 已剔非数字, 失焦再夹取+取整。
         react.createElement("div", { className: "dshadb_grid2", key: "planthresh" }, [
           react.createElement("div", { key: "psafe" }, [
             react.createElement("label", { className: "dshadb_label", key: "l1" }, t("settings.planSafe")),
-            react.createElement("input", { className: "dshadb_field", type: "number", min: 0, max: 100, step: 1, value: planSafe, onChange: (e) => setPlanSafe(numberDraft(e.target.value, 3)), onBlur: (e) => setPlanSafe(settleNumber(e.target.value, 0, 100, 30)), key: "i1" }),
-            react.createElement("span", { style: { fontSize: "10px", color: "var(--dsw-alias-label-tertiary)" }, key: "h1" }, t("settings.planSafeHint")),
+            react.createElement("input", { className: "dshadb_field", type: "number", min: 0, max: 100, step: 1, value: planSafe, onChange: (e) => setPlanSafe(numberDraft(e.target.value, 3)), onBlur: (e) => setPlanSafe(clampPlanPct(e.target.value, 30)), key: "i1" }),
           ]),
           react.createElement("div", { key: "pwarn" }, [
             react.createElement("label", { className: "dshadb_label", key: "l2" }, t("settings.planWarn")),
-            react.createElement("input", { className: "dshadb_field", type: "number", min: 0, max: 100, step: 1, value: planWarn, onChange: (e) => setPlanWarn(numberDraft(e.target.value, 3)), onBlur: (e) => setPlanWarn(settleNumber(e.target.value, 0, 100, 10)), key: "i2" }),
-            react.createElement("span", { style: { fontSize: "10px", color: "var(--dsw-alias-label-tertiary)" }, key: "h2" }, t("settings.planWarnHint")),
+            react.createElement("input", { className: "dshadb_field", type: "number", min: 0, max: 100, step: 1, value: planWarn, onChange: (e) => setPlanWarn(numberDraft(e.target.value, 3)), onBlur: (e) => setPlanWarn(clampPlanPct(e.target.value, 10)), key: "i2" }),
           ]),
         ]),
         react.createElement("div", { className: "dshadb_grid2", key: "misc" }, [

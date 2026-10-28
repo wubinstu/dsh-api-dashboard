@@ -201,6 +201,14 @@ a('包住胶囊的那层可收缩', /\.dshadb_barrow > span\{[^}]*max-width:100%
 a('状态条本体可收缩', /\.dshadb_bar\{[^}]*max-width:100%[^}]*min-width:0/.test(src))
 a('平台名可截断', /\.dshadb_bar_name\{[^}]*text-overflow:ellipsis/.test(src))
 a('金额/消耗/峰谷保住不缩(状态点已删, 不许再回来)', /\.dshadb_bar_amount,\.dshadb_bar_cost,\.dshadb_bar_peak\{[^}]*flex:0 0 auto/.test(src) && !/\.dshadb_bar_amount,\.dshadb_bar_cost,\.dshadb_bar_dot/.test(src))
+
+// ===== v1.8.2 状态条去粗(维护者: 「¥44.33 这个字体是不是加粗了, 前面的"阶跃星辰"好像也是」) =====
+// 旧值平台名 700 / 金额 800, 与同排宿主统计药丸(400)不在一个重量级, 观感就是"飘"。
+// 只钉状态条这一处: 看板卡片/详情页的数字仍是粗的(那里空间大、要层级), 别顺手全表改。
+a('状态条平台名不加粗(400, 与宿主同排文字同重量级)', /\.dshadb_bar_name\{font-weight:400;/.test(src))
+a('状态条金额不加粗(400)', /\.dshadb_bar_amount\{font-weight:400;/.test(src))
+a('平台名/金额的粗体不许复活(700/800 一条都不许出现)', !/\.dshadb_bar_(name|amount)\{font-weight:[78]00/.test(src))
+a('套餐 chip 仍是默认 400(没被顺手加粗)', !/\.dshadb_bar_plan\{[^}]*font-weight/.test(src))
 a('没给 barrow 加横向滚动(会撞手机壳手势让路规则)', !/\.dshadb_barrow\{[^}]*overflow-x/.test(src))
 // ===== v1.6.6 状态条独占一行 (真机: 跟宿主自带的统计行并排, 右端被屏幕切掉) =====
 // 宿主 uV2eYG_dock 把 composer.dock 槽位的所有贡献者排在同一条 nowrap flex 行里, 于是我们的胶囊

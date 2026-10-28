@@ -4,6 +4,7 @@
 // ⚠️ 测试只读仓库内文件 + os.tmpdir() 夹具, 不读运行机的私有文件(AGENTS.md 铁律 8)。
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 
 const source = fs.readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
@@ -27,19 +28,31 @@ const fetch = async () => ({ ok: true, json: async () => ({ ok: true }) })
 
 // 把内部函数提到 exports 上(与 test-v170-ui-fixes.mjs 同一招)。snapshot 是工厂级变量。
 const instrumented = source.replace('    exports.apply = apply;',
-  '    exports.__test = { planBarText, planLevel, planLevelOf, planRowLevel, planPct, planPct2, roundHalfUp2, BarReadout, PlatformDetail, SettingsModal, setSnapshot: v => { snapshot = v } };\n    exports.apply = apply;')
+  '    exports.__test = { planBarText, planLevel, planLevelOf, planRowLevel, planPct, planPct2, roundHalfUp2, clampPlanPct, BarReadout, PlatformDetail, SettingsModal, setSnapshot: v => { snapshot = v } };\n    exports.apply = apply;')
 assert.ok(instrumented !== source, '没找到 exports.apply 注入点 —— client.js 结构变了, 先更新本测试')
 new Function('window', 'document', 'navigator', 'localStorage', 'fetch', 'setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame', 'Audio', instrumented)(
   window, doc, {}, { getItem: () => '', setItem() {} }, fetch, fn => fn, () => {}, fn => { fn(); return 1 }, () => {}, class { play() { return Promise.resolve() } })
 const T = captured.__test
-const t = (k, vars) => { const zh = { 'plan.unlimited': '不限量', 'plan.left': '剩 {p}%', 'plan.used': '已用 {p}%', 'plan.usedM': '用 {n}M', 'plan.title': 'Step Plan 订阅套餐', 'plan.none': '该 Key 暂无订阅套餐', 'plan.unavailable': '套餐用量暂不可查（{r}）', 'plan.unlimitedLeft': '不限量', 'plan.credits': '{n}M credits', 'plan.resetAt': '{t} 重置', 'plan.expiresAt': '{d} 到期', 'plan.fiveHour': '5 小时窗口', 'plan.weekly': '周配额', 'plan.monthly': '月度配额', 'plan.bucketTotal': '套餐总额度', 'plan.bucketSub': '订阅额度', 'plan.bucketTopup': '加油包额度', 'plan.window': '限流窗口', 'plan.bucket': '额度桶', 'plan.remaining': '剩余', 'plan.total': '总额', 'plan.partial': '部分套餐数据缺失，以下为已查到的部分', 'settings.showPlan': '状态条显示套餐用量', 'settings.showPlanHint': '阶跃星辰等订阅套餐平台：在状态条余额后面追加一段套餐用量（如「用 11.22M 剩 22.33%」）。关掉后仍可在看板详情里查看。', 'settings.showCost': '状态条显示本会话消耗', 'settings.showCostHint': '在状态条末尾追加「~¥33.07」这段本会话消耗。默认关闭；关掉后看板详情里仍能看到完整的分模型/分币种消耗。', 'settings.planSafe': '套餐余量阈值(绿)', 'settings.planWarn': '套餐余量阈值(黄)', 'settings.planSafeHint': '订阅套餐剩余百分比不低于此值显示绿色。默认 30，与余额阈值是两把尺子', 'settings.planWarnHint': '低于此值显示黄色(偏低)，再低显示红。默认 10' }
+// H5 需要真起一次服务端路由做往返。STATE_FILE 是**模块加载时**从 process.env.DSH_HOME
+// 算出来的( src/index.js:509 ), 所以 import 之前就得把 DSH_HOME 指到一个临时目录,
+// 否则会读到/写到运行机上的真实状态文件(AGENTS.md 铁律 8)。
+// ⚠️ 这个临时目录**不能提前 rm 掉**, 而且**H5 内部不得再换一个目录**: STATE_FILE 只在加载时
+// 算一次, 之后无论 env 怎么改都指向它。实测踩到: import 时 env=A、H5 里再改成 B →
+// 落盘回 A、H5 在 B 里读不到(exists false / alt true)。所以 H5 里直接用 _impHome。
+const _impHome = fs.mkdtempSync(path.join(os.tmpdir(), 'dshadb-plan-imp-'))
+const _oldImpHome = process.env.DSH_HOME
+process.env.DSH_HOME = _impHome
+const srv = await import('../src/index.js').catch(() => null)
+if (_oldImpHome === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = _oldImpHome
+const t = (k, vars) => { const zh = { 'plan.unlimited': '不限量', 'plan.left': '剩 {p}%', 'plan.used': '已用 {p}%', 'plan.usedM': '用 {n}M', 'plan.title': 'Step Plan 订阅套餐', 'plan.none': '该 Key 暂无订阅套餐', 'plan.unavailable': '套餐用量暂不可查（{r}）', 'plan.unlimitedLeft': '不限量', 'plan.credits': '{n}M credits', 'plan.resetAt': '{t} 重置', 'plan.expiresAt': '{d} 到期', 'plan.fiveHour': '5 小时窗口', 'plan.weekly': '周配额', 'plan.monthly': '月度配额', 'plan.bucketTotal': '套餐总额度', 'plan.bucketSub': '订阅额度', 'plan.bucketTopup': '加油包额度', 'plan.window': '限流窗口', 'plan.bucket': '额度桶', 'plan.remaining': '剩余', 'plan.total': '总额', 'plan.partial': '部分套餐数据缺失，以下为已查到的部分', 'settings.showPlan': '状态条显示套餐用量', 'settings.showPlanHint': '阶跃星辰等订阅套餐平台：在状态条余额后面追加一段套餐用量（如「用 11.22M 剩 22.33%」）。关掉后仍可在看板详情里查看。', 'settings.showCost': '状态条显示本会话消耗', 'settings.showCostHint': '在状态条末尾追加「~¥33.07」这段本会话消耗。默认关闭；关掉后看板详情里仍能看到完整的分模型/分币种消耗。', 'settings.planSafe': '套餐余量阈值百分比(绿)', 'settings.planWarn': '套餐余量阈值百分比(黄)' }
   let s = zh[k] ?? k; if (vars) for (const [k2, v] of Object.entries(vars)) s = s.replace('{' + k2 + '}', String(v)); return s }
 const flatten = n => n && typeof n === 'object' ? [n, ...(n.children || []).flatMap(flatten)] : []
 // 默认夹具带 usedM, 对应「用 11.22M 剩 22.33%」这类两段格式; 窗口族没有 usedM, 只剩百分比段。
 const planView = (over = {}) => ({ kind: 'active', primary: { kind: 'window', key: 'five_hour', label: '5 小时窗口', leftPercent: 42, unlimited: false }, rows: [], quotaState: 'full', ...over })
 
 let fail = 0
-const check = (name, fn) => { try { fn() } catch (e) { fail++; console.log('FAIL: ' + name + ' → ' + e.message) } }
+// H5 是真起服务端的往返(需要 await), 用 run() 串起来; 其余 check 仍是同步。
+const check = (name, fn) => { try { const p = fn(); if (p && typeof p.then === 'function') return p.then(() => {}, e => { fail++; console.log('FAIL: ' + name + ' → ' + e.message) }) } catch (e) { fail++; console.log('FAIL: ' + name + ' → ' + e.message) } }
 
 // ---------- A. planBarText: 状态条 chip ----------
 check('A1 有套餐 → 用 11.22M 剩 22.33% (两位小数, 无「套餐」前缀)', () => {
@@ -334,9 +347,15 @@ check('D3 源码级: 保存只提交 showPlan 布尔, 不提交 key', () => {
 
 // ---------- E. i18n 成对 ----------
 check('E1 中英文案成对 (新 key 不许只加一半)', () => {
+  // v1.8.2: safeHint/warnHint/planSafeHint/planWarnHint 四段注释被维护者点名删掉
+  // (「把这些注释全部删除掉」), 所以这里改成**反向断言**: 一个都不许出现。
   const s = lf(source)
-  for (const k of ['plan.left', 'plan.used', 'plan.usedM', 'plan.unlimited', 'plan.unlimitedLeft', 'plan.title', 'plan.none', 'plan.unavailable', 'plan.partial', 'plan.credits', 'plan.resetAt', 'plan.expiresAt', 'plan.fiveHour', 'plan.weekly', 'plan.monthly', 'plan.bucketTotal', 'plan.bucketSub', 'plan.bucketTopup', 'plan.window', 'plan.bucket', 'plan.remaining', 'plan.total', 'settings.showPlan', 'settings.showPlanHint', 'settings.showCost', 'settings.showCostHint', 'plan.hint', 'plan.subtitle', 'settings.planSafe', 'settings.planWarn', 'settings.planSafeHint', 'settings.planWarnHint']) {
-    const n = s.split('"' + k + '":').length - 1
+  for (const k of ['settings.safeHint', 'settings.warnHint', 'settings.planSafeHint', 'settings.planWarnHint']) {
+    assert.equal(s.split('"' + k + '":').length - 1, 0, k + ' 是已删除的注释 key, 不许复活')
+  }
+  const src2 = lf(source)
+  for (const k of ['plan.left', 'plan.used', 'plan.usedM', 'plan.unlimited', 'plan.unlimitedLeft', 'plan.title', 'plan.none', 'plan.unavailable', 'plan.partial', 'plan.credits', 'plan.resetAt', 'plan.expiresAt', 'plan.fiveHour', 'plan.weekly', 'plan.monthly', 'plan.bucketTotal', 'plan.bucketSub', 'plan.bucketTopup', 'plan.window', 'plan.bucket', 'plan.remaining', 'plan.total', 'settings.showPlan', 'settings.showPlanHint', 'settings.showCost', 'settings.showCostHint', 'plan.hint', 'plan.subtitle', 'settings.planSafe', 'settings.planWarn']) {
+    const n = src2.split('"' + k + '":').length - 1
     assert.equal(n, 2, k + ' 在文案表里出现 ' + n + ' 次, 应中英各一次')
   }
 })
@@ -395,38 +414,123 @@ check('H1 设置面板有两个套餐阈值输入框(默认 30 / 10)', () => {
   assert.equal(planThreshInputs({ planSafeThreshold: 60, planWarnThreshold: 20 })[0].props.value, 60, '配置值要如实回显')
   assert.equal(planThreshInputs({ planSafeThreshold: 60, planWarnThreshold: 20 })[1].props.value, 20)
 })
+// v1.8.2: 维护者要求「把这些注释全部删除掉」+ 标题改「套餐余量阈值百分比」。
+// 根因是观感: 输入框下面的小字注释与**下一组**输入框的标题紧贴着, 分不清谁是谁。
+check('H1b 输入框注释已全部删除, 标题带「百分比」', () => {
+  const s = lf(source)
+  // 四段注释的 i18n key 一个都不许留(维护者点名的就是这四段)
+  for (const k of ['settings.safeHint', 'settings.warnHint', 'settings.planSafeHint', 'settings.planWarnHint']) {
+    assert.ok(!s.includes(k), '注释 key 必须删除: ' + k)
+  }
+  // 阈值输入框自己也不该再渲染 hint 子节点
+  const grids = flatten(T.SettingsModal({ isOpen: true, onClose() {}, t, config: {} }).node)
+    .filter(n => n.props && (n.props.key === 'thresh' || n.props.key === 'planthresh'))
+  assert.equal(grids.length, 2, '余额与套餐两组阈值网格都必须在')
+  for (const grid of grids) {
+    for (const box of grid.children.filter(Boolean)) {
+      assert.equal(box.children.filter(n => n.type === 'span').length, 0, '阈值输入框下不得再挂注释 span')
+    }
+  }
+  assert.match(s, /settings\.planSafe": "套餐余量阈值百分比\(绿\)"/, '标题要写清是百分比')
+  assert.match(s, /settings\.planWarn": "套餐余量阈值百分比\(黄\)"/)
+  assert.match(s, /settings\.planSafe": "Plan left % \(green\)"/, '英文同样成对')
+  assert.match(s, /settings\.planWarn": "Plan left % \(yellow\)"/)
+})
 check('H2 输入期允许清空(空串不许被 Number("")→0 静默吞掉), 失焦才夹取', () => {
   const s = lf(source)
   assert.match(s, /onChange: \(e\) => setPlanSafe\(numberDraft\(e\.target\.value, 3\)\)/, '输入期只存草稿')
   assert.match(s, /onChange: \(e\) => setPlanWarn\(numberDraft\(e\.target\.value, 3\)\)/)
-  assert.match(s, /onBlur: \(e\) => setPlanSafe\(settleNumber\(e\.target\.value, 0, 100, 30\)\)/, '失焦夹取, 空串回落 30(不是 0!)')
-  assert.match(s, /onBlur: \(e\) => setPlanWarn\(settleNumber\(e\.target\.value, 0, 100, 10\)\)/, '空串回落 10(0 会把套餐永远判红)')
+  // v1.8.2: 失焦改走 clampPlanPct(夹 0~100 + 取整), 空串仍回落 30/10
+  assert.match(s, /onBlur: \(e\) => setPlanSafe\(clampPlanPct\(e\.target\.value, 30\)\)/, '失焦夹取, 空串回落 30(不是 0!)')
+  assert.match(s, /onBlur: \(e\) => setPlanWarn\(clampPlanPct\(e\.target\.value, 10\)\)/, '空串回落 10(0 会把套餐永远判红)')
+  // 夹取器本身: 0~100 整数
+  assert.match(s, /function clampPlanPct\(v, fallback\) \{\s*return Math\.round\(settleNumber\(v, 0, 100, fallback\)\)/, 'clampPlanPct = 夹 0~100 再取整')
+})
+check('H2b clampPlanPct 行为: 0~100 整数, 空串/脏值回落默认', () => {
+  assert.equal(T.clampPlanPct('66', 30), 66)
+  assert.equal(T.clampPlanPct('0', 30), 0, '0 是合法值(真剩 0% 就是红)')
+  assert.equal(T.clampPlanPct('100', 30), 100)
+  assert.equal(T.clampPlanPct('150', 30), 100, '超过 100 夹到 100')
+  assert.equal(T.clampPlanPct('-5', 30), 0, '负数夹到 0')
+  assert.equal(T.clampPlanPct('12.6', 30), 13, '小数取整')
+  assert.equal(T.clampPlanPct('', 30), 30, '空串回落默认, 绝不是 0')
+  assert.equal(T.clampPlanPct(undefined, 10), 10)
+  assert.equal(T.clampPlanPct('abc', 10), 10, '非数字回落默认')
 })
 check('H3 保存体带上两个套餐阈值, 且回包认数字', () => {
   const s = lf(source)
   assert.match(s, /planSafeThreshold: nextPlanSafe, planWarnThreshold: nextPlanWarn,/, 'save() 必须提交套餐阈值')
-  assert.match(s, /const nextPlanSafe = settleNumber\(planSafe, 0, 1e9, 30\)/, '保存前规范化, 空串回落 30')
-  assert.match(s, /const nextPlanWarn = settleNumber\(planWarn, 0, 1e9, 10\)/, '保存前规范化, 空串回落 10')
+  // v1.8.2: save() 与失焦同一把尺子(v1.8.1 这里是 1e9, 能绕过 0~100 上限)
+  assert.match(s, /const nextPlanSafe = clampPlanPct\(planSafe, 30\)/, '保存前夹 0~100, 空串回落 30')
+  assert.match(s, /const nextPlanWarn = clampPlanPct\(planWarn, 10\)/, '保存前夹 0~100, 空串回落 10')
+  assert.ok(!/settleNumber\(planSafe/.test(s), 'save() 不得再用无上限的 settleNumber')
   assert.match(s, /typeof d\.planSafeThreshold === "number"\) setPlanSafe\(d\.planSafeThreshold\)/, '冷启动 /config 回包要补一次')
   assert.match(s, /typeof d\.planWarnThreshold === "number"\) setPlanWarn\(d\.planWarnThreshold\)/)
   assert.match(s, /setPlanSafe\(config\?\.planSafeThreshold \?\? 30\)/, '打开面板时先用快照里的值')
 })
-check('H4 服务端: 阈值全程接线(schema/落盘/两份下发/POST 受理)', () => {
-  const srv = fs.readFileSync(new URL('../src/index.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
-  assert.match(srv, /planSafeThreshold: Schema\.number\(\)\.min\(0\)\.default\(30\)/)
-  assert.match(srv, /planWarnThreshold: Schema\.number\(\)\.min\(0\)\.default\(10\)/)
-  // 消毒表: 脏值不能进状态文件
-  assert.match(srv, /\['planSafeThreshold', 0, Number\.MAX_SAFE_INTEGER\]/)
-  assert.match(srv, /\['planWarnThreshold', 0, Number\.MAX_SAFE_INTEGER\]/)
+check('H4 服务端: 阈值全程接线(schema/消毒表/落盘/两份下发/POST 受理)', () => {
+  const srvSrc = fs.readFileSync(new URL('../src/index.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+  // v1.8.2: schema 与消毒表都补 .max(100) —— 它是个百分比, 三道闸门尺子一致
+  assert.match(srvSrc, /planSafeThreshold: Schema\.number\(\)\.min\(0\)\.max\(100\)\.default\(30\)/)
+  assert.match(srvSrc, /planWarnThreshold: Schema\.number\(\)\.min\(0\)\.max\(100\)\.default\(10\)/)
+  assert.match(srvSrc, /\['planSafeThreshold', 0, 100\]/)
+  assert.match(srvSrc, /\['planWarnThreshold', 0, 100\]/)
   // loadPersistedState: 老状态文件没这两个字段 → 落默认值(数字缺省即默认, 不需 CONFIG_VERSION 迁移)
-  assert.match(srv, /planSafeThreshold: persisted\.planSafeThreshold \?\? config\.planSafeThreshold \?\? 30/)
-  assert.match(srv, /planWarnThreshold: persisted\.planWarnThreshold \?\? config\.planWarnThreshold \?\? 10/)
+  // v1.8.2: 两边都过 clampPlanPct —— 老状态文件里可能躺着 v1.8.1 写坏的超大值
+  assert.match(srvSrc, /planSafeThreshold: clampPlanPct\(persisted\.planSafeThreshold \?\? config\.planSafeThreshold, 30\)/)
+  assert.match(srvSrc, /planWarnThreshold: clampPlanPct\(persisted\.planWarnThreshold \?\? config\.planWarnThreshold, 10\)/)
+  // 夹取器: 纯函数、0~100、取整、脏值落 fallback
+  assert.match(srvSrc, /export const clampPlanPct = \(v, fallback\) => \{\s*const n = Number\(v\)\s*return Number\.isFinite\(n\) \? Math\.min\(Math\.max\(Math\.round\(n\), 0\), 100\) : fallback/)
   // 两份下发(/balances 的 cache.config + /config GET) + POST 受理 + 持久化。
   // ⚠️ 是三处不是四处: /api-dashboard/alerts 里那对 safeThreshold 是**余额告警**用的,
   // 告警链路(checkAlerts)至今只覆盖余额, 套餐余量不进告警, 所以那里故意不带 plan 阈值。
-  assert.equal(srv.split('planSafeThreshold: runtimeConfig.planSafeThreshold').length - 1, 3, 'planSafeThreshold 应出现在 cache.config / GET / savePersistedState 三处')
-  assert.match(srv, /typeof body\.planSafeThreshold === 'number' && body\.planSafeThreshold >= 0\) runtimeConfig\.planSafeThreshold = body\.planSafeThreshold/)
-  assert.match(srv, /typeof body\.planWarnThreshold === 'number' && body\.planWarnThreshold >= 0\) runtimeConfig\.planWarnThreshold = body\.planWarnThreshold/)
+  assert.equal(srvSrc.split('planSafeThreshold: runtimeConfig.planSafeThreshold').length - 1, 3, 'planSafeThreshold 应出现在 cache.config / GET / savePersistedState 三处')
+  assert.match(srvSrc, /runtimeConfig\.planSafeThreshold = clampPlanPct\(body\.planSafeThreshold, 30\)/)
+  assert.match(srvSrc, /runtimeConfig\.planWarnThreshold = clampPlanPct\(body\.planWarnThreshold, 10\)/)
+})
+// v1.8.2: 真机反馈「填写了其他数字保存并不生效, 重新打开后还是 30/10」。
+// 服务端往返本身是好的(本轮已用临时脚本实证: POST 66/22 → 落盘 → GET 全是 66/22),
+// 真因是**插件文件更新了但 dsh 没重启** —— 客户端半身刷新后已有新输入框, 服务端半身还是旧进程。
+// 这条往返断言把「代码是对的」钉住, 以后有人真改坏了这里会立刻红。
+check('H5 套餐阈值 POST → 落盘 → GET 往返一致, 超范围值被夹回 0~100', async () => {
+  assert.ok(srv, '服务端模块加载失败 —— H5 无法运行')
+  const home = _impHome
+  const oldHome = process.env.DSH_HOME
+  process.env.DSH_HOME = home
+  try {
+    const routes = []
+    const ctx = {
+      get() {}, effect() {},
+      // ⚠️ connection 是**嵌套** inject(见 src/index.js H-3): requestRejection 返回 undefined
+      // 才放行, 返回 401/403 会写 text/plain。这里返回 undefined = 与真机登录后等价。
+      inject(names, fn) {
+        if (names[0] === 'webServer') fn({ effect: (f) => f(), webServer: { register(r) { routes.push(r); return () => {} } } })
+        if (names[0] === 'connection') fn({ connection: { requestRejection: () => undefined } })
+      },
+    }
+    srv.apply(ctx, { presets: [] })
+    const route = routes.find(r => r.path === '/api-dashboard/config')
+    const req = (body, method = 'POST') => ({ method, async *[Symbol.asyncIterator]() { yield Buffer.from(JSON.stringify(body)) } })
+    const res = () => ({ code: null, body: null, writeHead(c) { this.code = c }, end(b) { this.body = JSON.parse(b) } })
+    let r = res()
+    await route.handler(req({ planSafeThreshold: 66, planWarnThreshold: 22 }), r)
+    assert.equal(r.code, 200, '保存必须回 200')
+    const st = JSON.parse(fs.readFileSync(path.join(home, 'dsh-api-dashboard.json'), 'utf8'))
+    assert.equal(st.planSafeThreshold, 66, '套餐阈值必须落盘')
+    assert.equal(st.planWarnThreshold, 22)
+    r = res(); await route.handler({ method: 'GET' }, r)
+    assert.equal(r.body.planSafeThreshold, 66, 'GET 要如实回读')
+    assert.equal(r.body.planWarnThreshold, 22)
+    // 超范围值必须被夹回 0~100(v1.8.1 的洞: 只校验 >=0, 1e9 能原样进状态文件)
+    r = res(); await route.handler(req({ planSafeThreshold: 1e9, planWarnThreshold: -3 }), r)
+    r = res(); await route.handler({ method: 'GET' }, r)
+    assert.equal(r.body.planSafeThreshold, 100, '超过 100 必须夹到 100')
+    assert.equal(r.body.planWarnThreshold, 0, '负数必须夹到 0')
+  } finally {
+    if (oldHome === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = oldHome
+    // _impHome 是模块加载时 STATE_FILE 指向的那个, 也是本用例实际读写的那个
+    fs.rmSync(_impHome, { recursive: true, force: true })
+  }
 })
 
 console.log(fail === 0 ? '\nStep Plan 客户端 UI 回归全部通过' : '\n失败 ' + fail + ' 项')

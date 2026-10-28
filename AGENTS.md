@@ -433,6 +433,52 @@ const hasPeakInfo = typeof config?.isPeak === "boolean" && !!current
 **B8（余额阈值怎么调都不影响套餐 chip —— 红线）**、C6（详情进度条不再硬编码 50/10）、
 H1~H4（输入框默认值与回显 / 输入期与失焦两段式 / save 体与回包 / 服务端 3 处接线）。
 
+### 🔴 v1.8.2 补的两件事：阈值必须夹到 **0~100 整数**；设置里四段灰字说明已删
+
+**① 「输入的内容就限制为 0~100的整数」（维护者原话）—— v1.8.1 只校验了非负，这是真实的洞。**
+
+v1.8.1 的三道闸门全都不设上限：schema `.min(0)`、消毒表 `[0, MAX_SAFE_INTEGER]`、
+客户端 `settleNumber(planSafe, 0, 1e9, 30)`（**上限故意放到 1e9**）。而 HTML 输入框的
+`max=100` 只是属性，**不阻止手动输入**。于是输入 `999` 能被原样写进状态文件，
+套餐永远判绿 —— 用户「保存后还是 30/10」之外更糟的一种表现是「保存了个用不了的值」。
+
+- 纯函数 `clampPlanPct(v, fallback)`：`Number(v)` → 非有限落 fallback →
+  `Math.min(Math.max(Math.round(n), 0), 100)`。**服务端 `export`、客户端复制同一实现**
+  （客户端不能 import 服务端模块，只能源码级一致；跨文件一致性断言的先例见
+  `test/test-bar.mjs` 的 `PEAK_VALLEY_PREFIXES` vs `phaseOfModel`）。
+- **六道闸门一次改齐**，只改一处等于没改：
+  | 闸门 | 位置 |
+  |---|---|
+  | schema | `Config` 两个字段 → `.min(0).max(100)` |
+  | 消毒表 | `NUMBER_FIELDS` → `['planSafeThreshold', 0, 100]` |
+  | POST 受理 | `runtimeConfig.planSafeThreshold = clampPlanPct(body.…, 30)` |
+  | `loadPersistedState` | **两侧都过** `clampPlanPct`（老状态文件里可能躺着 v1.8.1 写坏的超大值） |
+  | 客户端失焦 | `onBlur: e => setPlanSafe(clampPlanPct(e.target.value, 30))` |
+  | 客户端 `save()` | `clampPlanPct(planSafe, 30)`（**这一处 v1.8.1 是 0..1e9，是洞本身**） |
+- 空串 / 非数字失焦仍回落 **30 / 10，绝不是 0**（⑦ 铁律照旧：0 会让套餐永远判红）。
+- 数字字段缺省即默认，**不需要 CONFIG_VERSION 迁移**。
+
+**② 设置里的四段灰字说明已删（`settings.safeHint` / `warnHint` / `planSafeHint` / `planWarnHint`）。**
+
+维护者原话（截图红框）：「上一个设置框的注释和下一个设置输入框的标题放在一起很不清楚」。
+根因是设置面板里输入框与自己的说明是**上下堆叠**，而块与块之间原来没有间距 ——
+上一项的说明于是与下一项的标题粘成一块。删除说明后，**标题必须自己说清单位与含义**：
+「套餐余量阈值」两个框的标题改成「套餐余量阈值百分比(绿) / 套餐余量阈值百分比(黄)」。
+`.dshadb_field` 内说明留 2px、带说明的字段块与下一项之间留 6px。
+⚠️ **H1b 断言这四个 hint key 一个都不许再出现在源码里** —— 防止有人「顺手加回来」。
+
+**③ 「保存不生效」的判定顺序（别再往保存链路查）。**
+
+维护者反馈「填写了其他数字保存并不生效, 重新打开后还是 30/10」时，先用一次性脚本实证过
+**POST → 落盘 → GET 往返本来就是好的**（66/22 原样往返、1e9/-3 被夹到 100/0）。
+真因是**插件文件更新了但 dsh 没重启**：客户端半身刷新后已有新输入框，服务端半身还是
+旧进程，路由压根不存在 —— 与 v1.6.9 记录的 `stale` 同源。
+`test/test-v180-plan-ui.mjs` 的 **H5** 真起一次路由把往返钉住（POST 66/22 → 状态文件
+66/22 → GET 66/22；再 POST 1e9/-3 → GET 得 100/0）。
+⚠️ **H5 踩坑**：`STATE_FILE`（`src/index.js:509`）是**模块加载时**从 `process.env.DSH_HOME`
+算一次的常量，所以 import 之前就得把 env 指到临时目录，且**用例内部不得再换目录** ——
+换了就变成「落盘回旧目录、在新目录里读不到」（实测 `exists false` / 文件其实在另一个目录）。
+
 ---
 
 ## 六、开源发布前待办（2026-09-10 v1.4.0 校准）

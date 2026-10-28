@@ -546,8 +546,11 @@ const NUMBER_FIELDS = [
   ['safeThreshold', 0, Number.MAX_SAFE_INTEGER],
   ['warnThreshold', 0, Number.MAX_SAFE_INTEGER],
   // v1.8.1: 订阅套餐余量阈值 (默认 30/10, 与余额的 50/10 故意不同)
-  ['planSafeThreshold', 0, Number.MAX_SAFE_INTEGER],
-  ['planWarnThreshold', 0, Number.MAX_SAFE_INTEGER],
+  // v1.8.2: 上限从 MAX_SAFE_INTEGER 收成 100 —— 它是个百分比, 不是金额。
+  // 维护者原话「输入的内容就限制为 0~100的整数」; sanitizePersistedShape 自带 Math.round,
+  // 所以这里只管夹范围, 取整由它和 POST 受理各自负责。
+  ['planSafeThreshold', 0, 100],
+  ['planWarnThreshold', 0, 100],
   ['dailyLimit', 0, Number.MAX_SAFE_INTEGER],   // v1.6.2: 今日花销提醒阈值, 0=关闭
   ['alertRepeatHours', 0, ALERT_REPEAT_MAX_HOURS], // v1.6.8: 重复提醒间隔(小时), 0=只在跨档提醒一次
   ['configVersion', 0, Number.MAX_SAFE_INTEGER],
@@ -868,6 +871,19 @@ export const clampRefreshSec = (v) => Math.min(Math.max(Math.round(Number(v) || 
 export const clampMs = (v, min, max, fallback) => {
   const n = Number(v)
   return Number.isFinite(n) ? Math.min(Math.max(Math.round(n), min), max) : fallback
+}
+
+/**
+ * v1.8.2: 套餐余量阈值夹取 —— 0~100 的**整数**百分比。
+ * 与 clampRefreshSec / clampAlertRepeatHours 同一套写法(纯函数、可单测、脏值落 fallback)。
+ * ⚠️ 三个入口都必须走它, 少一个就会出现「尺子不一致」:
+ *   ① POST /api-dashboard/config 受理; ② sanitizePersistedShape(NUMBER_FIELDS 已登记 0~100,
+ *      且它自带 Math.round); ③ loadPersistedState 读老状态文件时的兜底(见下)。
+ * ⚠️ 别把 fallback 设成 0: planWarnThreshold=0 意味着「只剩 0% 才变黄」, 等于关掉预警。
+ */
+export const clampPlanPct = (v, fallback) => {
+  const n = Number(v)
+  return Number.isFinite(n) ? Math.min(Math.max(Math.round(n), 0), 100) : fallback
 }
 
 /**
@@ -1763,8 +1779,10 @@ export const Config = Schema.object({
    *   与客户端 planLevel() 都是厂商中立的, 以后别的平台接进来时同一对开关直接复用,
    *   不需要再加第二套字段。
    */
-  planSafeThreshold: Schema.number().min(0).default(30),
-  planWarnThreshold: Schema.number().min(0).default(10),
+  // v1.8.2: 补 .max(100) —— 它是个百分比。schema 是第二道闸门(POST 受理与
+  // sanitizePersistedShape 各一道), 三道一致才不会有「保存成功、回显一个超大数」。
+  planSafeThreshold: Schema.number().min(0).max(100).default(30),
+  planWarnThreshold: Schema.number().min(0).max(100).default(10),
   /** 计价货币 */
   currency: Schema.string().default('CNY'),
   /**
@@ -3484,8 +3502,10 @@ export function apply(ctx, config) {
     warnThreshold: persisted.warnThreshold ?? config.warnThreshold ?? 10,
     // v1.8.1: 套餐阈值默认 30/10。老状态文件没这两个字段 → 落默认值(数字缺省即默认, 不需迁移)。
     // ⚠️ 不能写 ?? 链时把余额那对默认值(50/10)抄过来 —— 两把尺子故意不同。
-    planSafeThreshold: persisted.planSafeThreshold ?? config.planSafeThreshold ?? 30,
-    planWarnThreshold: persisted.planWarnThreshold ?? config.planWarnThreshold ?? 10,
+    // v1.8.2: 两边都过 clampPlanPct —— 老状态文件里可能是 v1.8.1 写坏的超大值
+    // (那条路只校验 >=0), 不夹的话升级后档位判定恒绿、面板还回显一个荒谬的数。
+    planSafeThreshold: clampPlanPct(persisted.planSafeThreshold ?? config.planSafeThreshold, 30),
+    planWarnThreshold: clampPlanPct(persisted.planWarnThreshold ?? config.planWarnThreshold, 10),
     whaleEnabled: persisted.whaleEnabled ?? config.whaleEnabled ?? false,
     showNoBalanceBrands: persisted.showNoBalanceBrands ?? config.showNoBalanceBrands ?? false,
     showSubagentCapsules: typeof persisted.showSubagentCapsules === 'boolean' ? persisted.showSubagentCapsules : config.showSubagentCapsules ?? true,
@@ -4148,8 +4168,15 @@ export function apply(ctx, config) {
             if (body.alertRepeatHours !== undefined) runtimeConfig.alertRepeatHours = clampAlertRepeatHours(body.alertRepeatHours)
             if (typeof body.warnThreshold === 'number' && body.warnThreshold >= 0) runtimeConfig.warnThreshold = body.warnThreshold
             // v1.8.1: 套餐余量阈值 (与余额阈值同一套校验: 非负数, 脏值不进状态文件)
-            if (typeof body.planSafeThreshold === 'number' && body.planSafeThreshold >= 0) runtimeConfig.planSafeThreshold = body.planSafeThreshold
-            if (typeof body.planWarnThreshold === 'number' && body.planWarnThreshold >= 0) runtimeConfig.planWarnThreshold = body.planWarnThreshold
+            // v1.8.2: 上限收成 100 并取整 —— 它是个百分比。v1.8.1 这里只校验 >=0,
+            // 于是 1e9 这类值能原样进 runtimeConfig 和状态文件, 而客户端失焦夹的是 0~100,
+            // 两边尺子不一致(保存后回显还是一个超大数, 档位判定恒绿)。
+            if (typeof body.planSafeThreshold === 'number' && Number.isFinite(body.planSafeThreshold)) {
+              runtimeConfig.planSafeThreshold = clampPlanPct(body.planSafeThreshold, 30)
+            }
+            if (typeof body.planWarnThreshold === 'number' && Number.isFinite(body.planWarnThreshold)) {
+              runtimeConfig.planWarnThreshold = clampPlanPct(body.planWarnThreshold, 10)
+            }
             if (typeof body.currency === 'string' && body.currency.trim()) runtimeConfig.currency = body.currency.trim().toUpperCase()
             // v1.3.2: 海外模型独立计价货币, 只接受白名单三值 (脏值一律落回 follow, 不放行任意字符串)
             if (typeof body.overseasCurrency === 'string') {

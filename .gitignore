@@ -27,5 +27,8 @@ credentials*.yaml
 .idea/
 .vscode/
 
+# 一次性探针脚本(排错时 node -e 写下来的临时 .mjs, 用完即删; 写在这里防止 git add -A 顺手带进去)
+test/_tmp_*
+
 # DSHA machine-generated install receipts (not project source)
 .dsha-dependencies.json
