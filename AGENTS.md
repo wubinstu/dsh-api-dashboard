@@ -481,6 +481,79 @@ v1.8.1 的三道闸门全都不设上限：schema `.min(0)`、消毒表 `[0, MAX
 
 ---
 
+## 五sexies、状态条选中项的唯一解析器 `entryForProviderModel`（v1.9.0，改这块前必读）
+
+维护者第七轮反馈（2026-10-28）：「我当前用的是阶跃星辰的模型, 现在底下显示的是
+『阶跃星辰 ￥44.33 用 187.28M 剩 97.60%』…然后我当前模型选择的是 DeepSeek-V4.1-Flash
+（走的是 dshzuoxhe 这个中转站）, 所以底下就变成了『DeepSeek ¥1.10 用 187.28M 剩 97.60%』…
+我希望的是底下的这个切换能根据我当前选择的模型和 provider, 然后如果这个模型能对应上一个
+官方预设平台, 就显示这个预设平台的余额, 如果不能对应上官方预设平台（比如走中转站）,
+就显示中转站自己的余额」。
+
+### 🔴 根因是**两套逻辑**，不是「余额算错了」
+
+| 显示什么 | 旧判据 | 经中转站用 DeepSeek 模型时 |
+|---|---|---|
+| 平台名 / 峰谷图标 | `modelToPlatform(模型名)` → 官方预设 | 显示成官方 **DeepSeek**，还挂 ☀️/🌙 |
+| 金额 | `isRelayProvider(provider, config)` → 判「没有官方余额」 | 显示 **「—」** |
+
+于是状态条成了「**DeepSeek — 🌙**」：**有平台名和峰谷图标、余额却是空的**。两条路看起来就不是
+一套逻辑。注意用户要的**不是**「强制显示官方余额」—— 他明确说「不能对应上官方预设平台
+（比如走中转站）, 就显示中转站自己的余额」。所以正确修法是把两条路合并成**一个解析器**，
+而不是把其中一条掰向另一条。
+
+### 修法：`entryForProviderModel(provider, model, balances)` 三步优先级
+
+1. provider 名**直接命中条目**：`b.platform === p || b.id === p || b.platform === "dsh:"+p || b.id === "dsh:"+p`
+   （DSH 自动发现的条目 id 形如 `dsh:<provider>`，`listDshProviderRelays` 造的）。
+2. 未命中且**只在中转站/自定义类**里按**名字包含**匹配（`low.includes(b.platform.toLowerCase())`）：
+   - 只取「provider 名里带条目名」的方向。**别反向**（`b.platform.includes(low)`）——
+     那会把 `ab` 匹配到 `mimov`，`test/test-bar.mjs` 有钉子。
+   - 只在中转站/自定义类里找，**避免把官方预设误判成中转站**（`mimo` 是官方条目，
+     `mimov` 是中转站，provider 名 `mimov-relay` 该命中后者）。
+3. 都没命中 → `modelToPlatform(model)` 官方预设映射。
+
+一层都不中返回 `""`，**调用方自行兜底，这里不猜**。
+
+### 接线（漏一处就还是两套逻辑）
+
+- `applyModelToPlatform(m)` → `(m, prov)`：内部先 `entryForProviderModel(prov||"", m, dashData.balances||[])`，
+  `if (!pid) pid = modelToPlatform(m)` 兜底保留。
+- **两个**自动切换信号都传 `curProvider` 并把它加进 effect 依赖数组：模型目录 store 的即时信号
+  （`modelDirProvider`）与会话投影的 `cost.currentModel`。不加依赖 = 只换 provider 不换模型时
+  状态条还停在上一个中转站。
+- `BarReadout` 新增 prop `provider`，选中项没有对应条目时按同一个解析器兜底 ——
+  旧兜底是「第一个 ok 的条目」，会让**手动选择被静默改掉**（选一个没有余额条目的平台 →
+  `current` 落到别的平台 → 同步 effect 立刻把 `selectedId` 也改回去）。
+- `hasPeakInfo` 再补一道 `!isNoBalance && current.status === "ok"`：**余额没显示出来时一律不挂
+  峰谷标记**。峰谷是 DeepSeek **官方**计费方式，中转站自有定价，没有官方余额可看时挂这个标记
+  纯属装饰，还与「没有余额」自相矛盾。判据与金额文字同一把尺子（`isNoBalance = viaRelay || status === "no-balance-api"`）。
+
+### ☀️🌙 → 汉字「高峰/低谷」（红/绿）
+
+维护者原话「显示为红色的高峰和绿色的低谷汉字或其他好看符号」。用汉字而不是 emoji：
+① emoji 在各平台字体下大小/基线不稳，会把**刚对齐好的 22px 胶囊撑高**；
+② 红=高峰（全价）/绿=低谷（5 折）与状态条金额三色（ok 绿 / err 红）同一套语义，不用另学。
+配色换成金额那一套（peak `#d8443f` / valley `#2e9e5b`），`padding` 上下收到 1px、补
+`flex:0 0 auto;line-height:14px`，保证徽标总高不超 22px。
+
+⚠️ **只换状态条这一处**：看板详情卡 DeepSeek 峰谷价格卡里的 `☀️/🌙`（`peak.now` / `valley.now`
+文案）**故意保留**，维护者早就明确要求不动，`test/test-v162-today.mjs` 的 #12 有反向钉子。
+⚠️ `PEAK_VALLEY_PREFIXES` 只管「这个模型有没有峰谷价」，**不管**该显示哪个平台条目
+（那是 `entryForProviderModel` 的事）；已退役的 `deepseek-chat` / `reasoner` 没有峰谷价 → false。
+
+### 回归钉子
+
+`test/test-bar.mjs`：`RELAY_BAL` 夹具 + 8 条 `entryForProviderModel` 断言 + 2 条源码级
+（`applyModelToPlatform` 收 provider / 两个 effect 依赖 `curProvider`）+ 1 条 BarReadout 兜底
++ 2 条峰谷汉字化（**反向断言要限定在 createElement 的 badge 块内** —— CSS 注释里也有 ☀️）。
+`test/test-v180-plan-ui.mjs` 的 G2 改断言「高峰/低谷」与 peak/valley 配色，假 React 的 `t`
+字典要补 `peak.label` / `valley.label`（**漏了就是 `'peak.label' !== '高峰'`**）。
+`test/test-v162-today.mjs` 的 `hasPeakInfo` 断言同步新条件，且 `cli`/`src` 读进来先
+`replace(/\r\n/g, '\n')` —— 工作区可能被 `core.autocrlf` 检出成 CRLF，跨行正例会假阴性。
+
+---
+
 ## 六、开源发布前待办（2026-09-10 v1.4.0 校准）
 
 ### 🔎 「自动判定」现状（2026-09-10 在本机实测；v1.4.0 补上最后一块短板，被问到时照这个答）

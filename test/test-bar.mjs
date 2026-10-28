@@ -15,10 +15,11 @@ globalThis.cancelAnimationFrame=()=>{}
 let captured=null
 globalThis.window.__ModuleLoader__={load({factory}){captured=factory((n)=>{if(n==='react')return react;if(n==='@deepseek-ai/dsh-client-ui-primitives')return {};throw new Error('未知依赖 '+n)})}}
 // Windows: fs 吃 URL 对象; 用 .pathname 会得到 /D:/... → Node 解析成 D:\D:\...(ENOENT)
-let src=readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
-const srv=readFileSync(new URL('../src/index.js', import.meta.url), 'utf8')
+// 统一成 LF 再断言: 工作区可能被 core.autocrlf 检出成 CRLF, 跨行正例会假阴性。
+let src=readFileSync(new URL('../client/client.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+const srv=readFileSync(new URL('../src/index.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 const marker='    exports.apply = apply;'
-src=src.replace(marker,`    exports.__test = { modelToPlatform, isRelayProvider, barAmountText, buildSubagentRow, formatSessionCost, planLevel, planBarText, planTooltip, planRowLabel, isPeakValleyModel };
+src=src.replace(marker,`    exports.__test = { modelToPlatform, isRelayProvider, barAmountText, buildSubagentRow, formatSessionCost, planLevel, planBarText, planTooltip, planRowLabel, isPeakValleyModel, entryForProviderModel };
 `+marker)
 new Function('window','document','navigator','localStorage',src)(globalThis.window,doc,{hardwareConcurrency:8,language:'zh-CN'},globalThis.localStorage)
 const T=captured.__test
@@ -253,7 +254,15 @@ a('删除状态点后金额文字补了灰色档(no-balance-api / 中转站不�
 a('告警通道的小圆点仍用 dshadb_bar_dot(只删状态条那一处, 设置面板要留)',
   /dshadb_bar_dot_ok/.test(src))
 a('峰谷标记按当前平台收口: 平台不是 deepseek 一律不显示',
-  /current\.platform === "deepseek" && isPeakValleyModel\(peakModel\)/.test(src))
+  /current\.platform === "deepseek"/.test(src)
+  && !/hasPeakInfo = typeof config\?\.isPeak === "boolean" && peakValley === true/.test(src))
+// v1.9.0: 余额没显示出来(viaRelay / no-balance-api / status 非 ok)时一律不挂峰谷标记。
+// 维护者实测经中转站用 DeepSeek 模型时, 平台名与图标走"平台"那套、余额走"provider"那套,
+// 状态条成了「DeepSeek — 🌙」。判据必须与金额文字同一把尺子(isNoBalance)。
+a('v1.9.0 余额没显示出来时不挂峰谷标记(与金额文字同一把尺子 isNoBalance)',
+  /const isNoBalance = viaRelay \|\| \(current && current\.status === "no-balance-api"\);[\s\S]{0,500}?hasPeakInfo[\s\S]{0,400}?!isNoBalance[\s\S]{0,300}?current\.status === "ok"/.test(src))
+a('v1.9.0 isNoBalance 只算一次(峰谷标记与金额文字共用, 不许各算一套)',
+  (src.match(/const isNoBalance = viaRelay/g) || []).length === 1)
 a('峰谷标记不再用会话投影的 peakValley(切模型会滞后)',
   !/hasPeakInfo = typeof config\?\.isPeak === "boolean" && peakValley === true/.test(src))
 a('峰谷模型前缀表与 src/index.js 的 phaseOfModel 一致(改一边会红)',
@@ -281,6 +290,60 @@ a('isPeakValleyModel: deepseek-chat/reasoner/r1 与其它厂商为 false',
   && T.isPeakValleyModel('claude-opus-5') === false)
 a('isPeakValleyModel: 空/非字符串一律 false(取不到模型时不显示, 少一个装饰好过挂错一个)',
   T.isPeakValleyModel('') === false && T.isPeakValleyModel(undefined) === false && T.isPeakValleyModel(null) === false)
+
+// ---------- v1.9.0: 手动切换与「输入框换模型」自动切换统一成一套解析 ----------
+// 维护者 2026-10-28: 「这两种切换显示不是同一套逻辑…尽可能统一成一套切换/显示逻辑」。
+// 入口就是 entryForProviderModel: provider 命中中转站/自定义条目优先, 否则按模型名映射官方预设。
+const RELAY_BAL = [
+  { id: 'dsh:dshzuoxhe', platform: 'dsh:dshzuoxhe', category: '中转站', status: 'ok', total: 12, currency: 'CNY' },
+  { id: 'p1', platform: 'deepseek', category: '国内', status: 'ok', total: 44.33, currency: 'CNY' },
+  { id: 'p2', platform: 'stepfun', category: '国内', status: 'ok', total: 1, currency: 'CNY' },
+]
+a('entryForProviderModel: provider 命中 DSH 自动发现的条目(id 形如 dsh:<provider>)',
+  T.entryForProviderModel('dshzuoxhe', 'DeepSeek-V4.1-Flash', RELAY_BAL) === 'dsh:dshzuoxhe')
+a('entryForProviderModel: 经中转站用 deepseek 模型时不再映射到官方 deepseek 预设',
+  T.entryForProviderModel('dshzuoxhe', 'deepseek-v4-flash', RELAY_BAL) !== 'deepseek')
+a('entryForProviderModel: 官方 provider 没有对应条目 → 回落模型名映射',
+  T.entryForProviderModel('deepseek', 'deepseek-v4-flash', RELAY_BAL) === 'deepseek'
+  && T.entryForProviderModel('', 'deepseek-v4-flash', RELAY_BAL) === 'deepseek'
+  && T.entryForProviderModel('', 'step-5-preview', RELAY_BAL) === 'stepfun')
+a('entryForProviderModel: provider 为空/非字符串时按模型名走, 不猜',
+  T.entryForProviderModel(null, 'glm-5.3', RELAY_BAL) === 'zhipu'
+  && T.entryForProviderModel(undefined, 'claude-opus-5', RELAY_BAL) === 'claude')
+a('entryForProviderModel: 名字包含匹配只在中转站/自定义类里找(不把官方预设当中转站)',
+  T.entryForProviderModel('mimov-relay', 'mimo-v2.5', [
+    { id: 'r1', platform: 'mimov', category: '中转站', status: 'ok' },
+    { id: 'p9', platform: 'mimo', category: '国内', status: 'ok' },
+  ]) === 'mimov')
+a('entryForProviderModel: 名字包含匹配只取**包含**方向(provider 名里带条目名)',
+  T.entryForProviderModel('ab', 'mimo-v2.5', [
+    { id: 'r1', platform: 'mimov', category: '中转站', status: 'ok' },
+    { id: 'p9', platform: 'mimo', category: '国内', status: 'ok' },
+  ]) === 'mimo')
+a('entryForProviderModel: balances 不是数组 / 空数组时不炸, 回落模型映射',
+  T.entryForProviderModel('x', 'deepseek-v4', null) === 'deepseek'
+  && T.entryForProviderModel('x', 'deepseek-v4', []) === 'deepseek')
+a('entryForProviderModel: provider 与模型都对不上时返回空串(调用方兜底, 这里不猜)',
+  T.entryForProviderModel('nowhere', 'totally-unknown-model', RELAY_BAL) === '')
+a('自动切换现在把 provider 传进 applyModelToPlatform(以前只传模型)',
+  /applyModelToPlatform\(m, curProvider\)/.test(src)
+  && /applyModelToPlatform = react\.useCallback\(\(m, prov\) =>/.test(src))
+a('自动切换的两个 effect 都依赖 curProvider(只换 provider 不换模型也要跟着切)',
+  /\}, \[modelDirModel, didModelDir, curProvider\]\);/.test(src)
+  && /\}, \[cost && cost\.currentModel, curProvider\]\);/.test(src))
+a('BarReadout 选中项没有对应条目时按同一解析器兜底(不再退化成第一个 ok 的)',
+  /const pid = entryForProviderModel\(provider, peakModel, balances\);/.test(src))
+// 峰谷徽标: ☀️🌙 → 汉字「高峰/低谷」, 红/绿
+a('峰谷徽标改成汉字: 高峰(红) / 低谷(绿)',
+  /isPeak \? t\("peak\.label"\) : t\("valley\.label"\)/.test(src))
+a('峰谷徽标配色与金额三色同一套: 高峰 #d8443f(err 红) / 低谷 #2e9e5b(ok 绿)',
+  /\.dshadb_bar_peak\.peak\{[^}]*color:#d8443f/.test(src) && /\.dshadb_bar_peak\.valley\{[^}]*color:#2e9e5b/.test(src))
+a('状态条峰谷徽标不再用 ☀️🌙 emoji(字体不稳会撑高胶囊; 看板详情卡仍可用)',
+  /dshadb_bar_peak " \+ \(isPeak \? "peak" : "valley"\)[\s\S]{0,200}?isPeak \? t\("peak\.label"\) : t\("valley\.label"\)/.test(src)
+  && !/createElement\("span", \{[\s\S]{0,200}?dshadb_bar_peak[\s\S]{0,300}?\}, [^;]*☀️/.test(src))
+a('i18n: peak.label / valley.label 中英成对',
+  /"peak\.label": "高峰"/.test(src) && /"valley\.label": "低谷"/.test(src)
+  && /"peak\.label": "Peak"/.test(src) && /"valley\.label": "Off-peak"/.test(src))
 
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`)
 // v1.3.2: 断言失败时以非 0 退出, 否则 CI(GitHub Actions)拦不住回归 —— 原来一律 exit 0

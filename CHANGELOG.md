@@ -4,6 +4,47 @@
 
 ## v1.x
 
+- **v1.9.0** — **状态条选中项改由「provider + 模型」共同决定；峰谷徽标 ☀️🌙 换成汉字「高峰/低谷」**（真机反馈两条）。
+
+  **① 经中转站用模型时，状态条不再显示成官方平台 +「—」。**
+  维护者原话：「我当前用的是阶跃星辰的模型, 现在底下显示的是『阶跃星辰 ￥44.33 用 187.28M 剩 97.60%』…
+  然后我当前模型选择的是 DeepSeek-V4.1-Flash（走的是 dshzuoxhe 这个中转站）, 所以底下就变成了
+  『DeepSeek ¥1.10 用 187.28M 剩 97.60%』…我希望的是底下的这个切换能根据我当前选择的模型和 provider,
+  然后如果这个模型能对应上一个官方预设平台, 就显示这个预设平台的余额, 如果不能对应上官方预设平台
+  （比如走中转站）, 就显示中转站自己的余额」。
+  - 根因是**两套逻辑**：平台名/峰谷图标走 `modelToPlatform`（模型名 → 官方预设），余额走 `isRelayProvider(provider)`
+    （provider 是中转站 → 判「没有官方余额」）。经中转站用 DeepSeek 模型时，平台名显示成官方 DeepSeek、
+    余额却是「—」，状态条成了「DeepSeek — 🌙」——**有图标没数字**，怎么看都不是一套逻辑。
+  - 修法：新增**唯一解析器** `entryForProviderModel(provider, model, balances)`（client/client.js），三步优先级：
+    ① provider 名直接命中条目（DSH 自动发现的条目 id 形如 `dsh:<provider>`）；
+    ② 未命中且**只在中转站/自定义类**里按名字包含匹配（只取「provider 名里带条目名」的方向，反向会把 `ab` 匹配到 `mimov`）；
+    ③ 都没命中 → `modelToPlatform(model)` 官方预设映射。一层都不中返回 `""`，调用方自行兜底，**这里不猜**。
+  - `applyModelToPlatform` 签名 `(m)` → `(m, prov)`，两个自动切换信号（模型目录 store 的即时信号 / 会话投影的
+    `cost.currentModel`）都传 `curProvider`，并把它加进 effect 依赖数组 —— 只换 provider 不换模型时也要跟着切。
+  - `BarReadout` 新增 prop `provider`：选中项没有对应条目时按**同一个解析器**兜底，不再退化成「第一个 ok 的条目」
+    （旧兜底会让手动选择被静默改掉：选一个没有余额条目的平台 → `current` 落到别的平台 → 同步 effect 立刻把
+    `selectedId` 改回去）。
+  - 顺带补一道：**余额没显示出来时一律不显示峰谷标记**（`!isNoBalance && current.status === "ok"`）。
+    峰谷是 DeepSeek **官方**计费方式，中转站自有定价，没有官方余额可看时挂这个标记纯属装饰，还与「没有余额」自相矛盾。
+    判据与金额文字同一把尺子（`isNoBalance = viaRelay || status === "no-balance-api"`）。
+
+  **② 峰谷徽标 ☀️🌙 → 汉字「高峰/低谷」（红/绿）。**
+  维护者原话「显示为红色的高峰和绿色的低谷汉字或其他好看符号」。用汉字而不是 emoji 的两个理由：
+  ① emoji 在各平台字体下大小/基线不稳，会把 22px 的胶囊撑高（刚对齐好的事）；
+  ② 红=高峰（全价）、绿=低谷（5 折）与状态条金额的三色（ok 绿 / err 红）同一套语义，不用另学。
+  - 配色换成金额那一套：peak `#d8443f` / valley `#2e9e5b`；`padding` 上下收到 1px、补 `flex:0 0 auto;line-height:14px`，
+    保证徽标总高不超 22px 的胶囊。
+  - ⚠️ 只换**状态条这一处**：看板详情卡 DeepSeek 峰谷价格卡里的 `☀️/🌙`（`peak.now` / `valley.now` 文案）
+    **故意保留**，维护者早就明确要求不动，`test/test-v162-today.mjs` 有反向钉子。
+
+  **回归钉子**：`test/test-bar.mjs` 新增 `entryForProviderModel` 夹具 RELAY_BAL + 8 条断言
+  （provider 直接命中 / 名字包含只在中转站类里找 / 只取包含方向 / provider 为空走模型映射 / 对不上返回空串 /
+  `applyModelToPlatform` 收 provider 两个源码级 / 两个 effect 依赖 `curProvider` / BarReadout 用同一解析器兜底）
+  + 峰谷徽标汉字化两条（状态条不得再出现 ☀️🌙）→ **139 通过**；
+  `test/test-v180-plan-ui.mjs` G2 改为断言「高峰/低谷」与 peak/valley 配色，假 React 的 `t` 字典补
+  `peak.label`/`valley.label`；`test/test-v162-today.mjs` 的 `hasPeakInfo` 断言同步新条件（平台 + 模型 + 有余额），
+  并把 `cli`/`src` 统一成 LF 再断言（工作区可能被 core.autocrlf 检出成 CRLF，跨行正例会假阴性）。
+
 - **v1.8.0** — **阶跃星辰 Step Plan 订阅套餐用量** + **状态条不再向上偏移**（含峰谷标记改按平台判定、删状态点）。
 
   **① 阶跃星辰：余额之外，把 Step Plan 订阅套餐用量也显示出来。**

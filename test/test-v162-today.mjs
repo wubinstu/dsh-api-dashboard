@@ -145,8 +145,9 @@ a('#7 stateVersion 升到 6 (own.byDay 新增，老状态必须重放)',
 
 
 // ===== ⑧ 超限提醒的接线 (客户端 + 配置项) =====
-const cli = fs.readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
-const src = fs.readFileSync(new URL('../src/index.js', import.meta.url), 'utf8')
+// 统一成 LF 再断言: 工作区可能被 core.autocrlf 检出成 CRLF, 跨行正例会假阴性。
+const cli = fs.readFileSync(new URL('../client/client.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+const src = fs.readFileSync(new URL('../src/index.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 
 a('#8 挂件暴露 warn(能主动弹指定台词, 不是只能随机)',
   /warn: function \(lines\) \{/.test(cli) && /renderLines\(lines \|\| whalePickLines\(st\)\)/.test(cli))
@@ -192,7 +193,7 @@ a('#8 挂件同步依赖用 JSON 串(投影 view 每次刷新都是新引用)',
     g.view.peakValley === false && c.view.peakValley === false)
   a('#10 峰谷模型 peakValley=true (deepseek)', d.view.peakValley === true)
   a('#10 状态条按「平台 + 模型」决定显示峰谷标记, 不再只看 config.isPeak',
-    /hasPeakInfo = typeof config\?\.isPeak === "boolean" && !!current && current\.platform === "deepseek" && isPeakValleyModel\(peakModel\)/.test(cli))
+    /hasPeakInfo = typeof config\?\.isPeak === "boolean" && !!current && current\.platform === "deepseek"\s*\n\s*&& !isNoBalance/.test(cli))
 }
 // ===== ⑪ 法定节假日全天算谷时 (维护者问的) =====
 {

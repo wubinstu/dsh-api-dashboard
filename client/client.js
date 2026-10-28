@@ -301,9 +301,12 @@ window.__ModuleLoader__.load({
 .dshadb_bar_dot_ok{background:#35b56b}
 .dshadb_bar_dot_warn{background:#e6a72f}
 .dshadb_bar_dot_err{background:#e05252}
-.dshadb_bar_peak{font-size:10px;padding:2px 7px;border-radius:999px;font-weight:700}
-.dshadb_bar_peak.peak{background:rgba(230,167,47,0.12);color:#b07d1a;border:1px solid rgba(230,167,47,0.2)}
-.dshadb_bar_peak.valley{background:rgba(79,124,255,0.10);color:#3d5fcc;border:1px solid rgba(79,124,255,0.18)}
+.dshadb_bar_peak{font-size:10px;padding:1px 6px;border-radius:999px;font-weight:700;flex:0 0 auto;line-height:14px}
+/* v1.9.0: ☀️🌙 → 汉字「高峰/低谷」。配色与状态条金额的三色同一套语义:
+   红 = 高峰(全价, .dshadb_bar_err 的 #d8443f), 绿 = 低谷(5 折, .dshadb_bar_ok 的 #2e9e5b)。
+   ⚠️ padding 上下只留 1px: 胶囊 min-height 是 22px, 徽标总高 10+2+2+14 行高内不能超它。 */
+.dshadb_bar_peak.peak{background:rgba(216,68,63,0.10);color:#d8443f;border:1px solid rgba(216,68,63,0.20)}
+.dshadb_bar_peak.valley{background:rgba(46,158,91,0.10);color:#2e9e5b;border:1px solid rgba(46,158,91,0.18)}
 
 /* ===== 遮罩 ===== */
 .dshadb_scrim{position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,0.35);overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
@@ -847,7 +850,9 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
       "qt.auto": "自动探测", "qt.openai": "OpenAI 格式", "qt.quota": "OneAPI/NewAPI quota", "qt.deepseek": "DeepSeek 格式", "qt.openai-billing": "OpenAI 订阅", "qt.custom": "手动映射",
       "cmn": "人民币 ¥", "usd": "美元 $",
       "peak.now": "梁文峰 ☀️ 峰时计费",
+      "peak.label": "高峰",
       "valley.now": "梁文谷 🌙 谷时 5 折",
+      "valley.label": "低谷",
       "valley.weekend": "梁文谷 🌙 周末全天特惠",
       "peak.hint": "09:00~12:00 / 14:00~18:00",
       "valley.hint": "其余时段 / 周末全天",
@@ -961,7 +966,9 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
       "qt.auto": "Auto", "qt.openai": "OpenAI", "qt.quota": "OneAPI quota", "qt.deepseek": "DeepSeek", "qt.openai-billing": "OpenAI sub", "qt.custom": "Manual map",
       "cmn": "CNY ¥", "usd": "USD $",
       "peak.now": "Peak ☀️ full rate",
+      "peak.label": "Peak",
       "valley.now": "Off-peak 🌙 50% off",
+      "valley.label": "Off-peak",
       "valley.weekend": "Weekend 🌙 all-day off",
       "peak.hint": "09:00-12:00 / 14:00-18:00",
       "valley.hint": "other time / weekends",
@@ -1497,6 +1504,9 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
     // —— test-bar.mjs 有跨文件一致性断言, 只改一边会红。
     // ⚠️ 这是**前缀**匹配不是等值: deepseek-v4-flash-vision-exp 与 deepseek-flash 同价,
     // 靠 deepseek-flash 前缀把它收进来。
+    // v1.9.0: 它只管「这个模型有没有峰谷价」, **不管**该显示哪个平台条目(那是
+    // entryForProviderModel 的事)。已退役的 deepseek-chat/reasoner 没有峰谷价 → false,
+    // 别给它们挂高峰/低谷徽标(v0.5.3 红线: 它们被劫持进 v4 表会让 output 虚高 4.5 倍)。
     const PEAK_VALLEY_PREFIXES = ["deepseek-v4", "deepseek-flash"];
     function isPeakValleyModel(model) {
       if (typeof model !== "string" || model === "") return false;
@@ -1504,6 +1514,40 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
       for (const p of PEAK_VALLEY_PREFIXES) if (m.startsWith(p)) return true;
       return false;
     }
+
+    /**
+     * v1.9.0: 「状态条该显示哪个平台条目」的**唯一**解析器 —— 手动切换(点插件弹对话框)与
+     * 「输入框里换模型」自动切换共用它, 不再两套逻辑。
+     *
+     * 为什么必须统一(维护者 2026-10-28 实测): 以前自动切换只按 modelToPlatform 把模型名
+     * 映射到**官方预设**(平台名 / 峰谷图标走这条), 而余额显示按 isRelayProvider(provider)
+     * 判断走不走中转站(金额走这条)。用户经中转站用 DeepSeek 模型时, 平台名与峰谷图标显示成
+     * 官方 DeepSeek、余额却被 provider 判成中转站而显示「—」→ 状态条成了
+     * 「DeepSeek — 🌙」: **有峰谷图标但是没有余额**, 两条路看起来就不是一套逻辑。
+     *
+     * 优先级(与"你实际在用什么"从具体到一般):
+     *   ① provider 名命中中转站/自定义条目(DSH 自动发现的条目 id 形如 dsh:<provider>);
+     *   ② provider 名是某个条目 platform 的子串(手填中转站的老启发式, 保留);
+     *   ③ 按模型名映射到官方预设(modelToPlatform)。
+     * 一层都命不中返回 "" —— 调用方自行兜底, 这里不猜。
+     */
+    function entryForProviderModel(provider, model, balances) {
+      const list = Array.isArray(balances) ? balances : [];
+      const p = typeof provider === "string" ? provider.trim() : "";
+      if (p) {
+        const low = p.toLowerCase();
+        // ① provider 名直接等于条目 id / platform (DSH 自动发现的条目 id 形如 dsh:<provider>)
+        let hit = list.find((b) => b && (b.platform === p || b.id === p || b.platform === "dsh:" + p || b.id === "dsh:" + p));
+        // ② 只在「中转站/自定义」类里按名字包含匹配, 避免把官方预设误判成中转站
+        if (!hit) {
+          hit = list.find((b) => b && typeof b.platform === "string" && b.platform !== ""
+            && (b.category === "中转站" || b.category === "自定义") && low.includes(b.platform.toLowerCase()));
+        }
+        if (hit && hit.platform) return hit.platform;
+      }
+      return modelToPlatform(model);
+    }
+
     /** 三色等级: 百分比型(套餐剩余%)用安全/预警阈值; 真实货币金额无百分比语义, 一律 ok
      *  v0.5.6 修复: 旧逻辑把 ¥2.55 这类绝对金额跟 50/10 的百分比阈值比较, 导致显示「异常」 */
     function getLevel(b, cfg) {
@@ -1601,7 +1645,14 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
       const data = react.useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
       const balances = data.balances || [];
       let current = balances.find(b => b.platform === selectedId);
-      if (!current) current = balances.find(b => b.status === "ok") || balances[0];
+      // v1.9.0: 选中项没有对应条目时, 按 (provider, model) 解析 —— 与「输入框换模型」
+      // 自动切换**同一个解析器**(entryForProviderModel), 不再退化成「第一个 ok 的条目」。
+      // 旧兜底会让手动选择被静默改掉: 选一个没有余额条目的平台 → current 落到别的平台 →
+      // 下面那个同步 effect 立刻把 selectedId 也改回去, 用户的手动选择白费。
+      if (!current) {
+        const pid = entryForProviderModel(provider, peakModel, balances);
+        current = (pid ? balances.find(b => b.platform === pid) : null) || balances.find(b => b.status === "ok") || balances[0];
+      }
       // 当前走中转站时不显示官方余额 (中转站没有余额接口)
       const viaRelay = isRelayProvider(provider, config);
       // 选中项与当前平台不同步时, commit 后再同步 (render 阶段调用会触发 React 18 警告)
@@ -1645,11 +1696,22 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
       // 模型改用模型目录的即时信号(与 applyModelToPlatform 同源), 不再等投影。
       // ⚠️ 取不到模型时 isPeakValleyModel("") 返回 false → 不显示。这是故意的:
       // 少一个装饰标记远好过挂错一个。
-      const hasPeakInfo = typeof config?.isPeak === "boolean" && !!current && current.platform === "deepseek" && isPeakValleyModel(peakModel);
+      // v1.9.0: 再补一道 —— **余额没显示出来时一律不显示峰谷标记**。
+      // 维护者 2026-10-28 实测(经中转站用 DeepSeek 模型): 平台名/峰谷图标走"平台"这套
+      // 逻辑显示成官方 DeepSeek, 余额却走"provider"那套逻辑被判成中转站而显示「—」,
+      // 状态条成了「DeepSeek — 🌙」。峰谷是 DeepSeek **官方**计费方式, 中转站自有定价,
+      // 没有官方余额可看时挂这个标记就是纯装饰, 还与"没有余额"自相矛盾。
+      // 判据用 isNoBalance(viaRelay || 查不到余额接口), 与金额文字走同一把尺子。
+      const isNoBalance = viaRelay || (current && current.status === "no-balance-api");
+      const hasPeakInfo = typeof config?.isPeak === "boolean" && !!current && current.platform === "deepseek"
+        && !isNoBalance && current.status === "ok" && isPeakValleyModel(peakModel);
       const isPeak = config?.isPeak === true;
       const isWknd = config?.isWeekend === true;
 
-      // 峰谷标记 (趣味版: 梁文峰 ☀️ / 梁文谷 🌙)
+      // 峰谷标记 (v1.9.0: ☀️🌙 → 汉字「高峰/低谷」, 红/绿)
+      // 维护者 2026-10-28 要求「显示为红色的高峰和绿色的低谷汉字或其他好看符号」。
+      // 用汉字而不是 emoji: ① emoji 在各平台字体下大小/基线不稳, 把 22px 的胶囊撑高;
+      // ② 红=高峰、绿=低谷与状态条金额的三色(ok 绿 / err 红)同一套语义, 不用另学。
       let peakNode = null;
       if (hasPeakInfo) {
         const peakTitle = isPeak
@@ -1659,7 +1721,7 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
           className: "dshadb_bar_peak " + (isPeak ? "peak" : "valley"),
           key: "peak",
           title: peakTitle,
-        }, isPeak ? "☀️" : "🌙");
+        }, isPeak ? t("peak.label") : t("valley.label"));
       }
 
       // v1.8.0: 状态条不再显示平台 logo —— 维护者 2026-10-27 反馈「是不是图标搞的鬼,
@@ -1682,7 +1744,7 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
       ]);
 
       const meta = metaFor(current.platform), level = getLevel(current, config);
-      const isNoBalance = viaRelay || (current && current.status === "no-balance-api");
+      // isNoBalance 在上面算过(峰谷标记要用同一把尺子), 这里不再重复
       // v1.8.1: 删掉状态点, 让金额文字本身当状态灯 —— 维护者 2026-10-28 要求
       // 「把这个状态灯完全删除, 所有厂商都不要显示状态灯了, 反正这个 ¥44.33 余额字体
       // 已经可以显示为绿色/黄色/红色, 让余额字体本身成为状态灯即可」。金额本来就用
@@ -3908,17 +3970,17 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
           const handleSelect = (id) => { setSelected(id); setSelectedId(id); };
 
           // v0.5.15: 按模型名切到对应平台的核心逻辑 (两条信号共用)
-          const applyModelToPlatform = react.useCallback((m) => {
+          // v1.9.0: 改成 **provider 优先** —— 经中转站用 DeepSeek 模型时, 以前会切到官方
+          // DeepSeek 预设(平台名/峰谷图标显示成官方, 余额却因 provider 是中转站而显示「—」,
+          // 状态条成了「DeepSeek — 🌙」)。现在先按 provider 命中中转站/自定义条目,
+          // 命中不了才按模型名映射官方预设。两条路(手动 / 输入框换模型)最终都落到同一个条目。
+          const applyModelToPlatform = react.useCallback((m, prov) => {
             if (!m || typeof m !== "string") return;
-            let pid = modelToPlatform(m);
-            if (!pid) {
-              try {
-                const low = m.toLowerCase();
-                const hit = (dashData.balances || []).find((b) =>
-                  (b.category === "中转站" || b.category === "自定义") && b.platform && low.includes(String(b.platform).toLowerCase()));
-                pid = hit ? hit.platform : "";
-              } catch (e) { pid = ""; }
-            }
+            let pid = "";
+            try {
+              pid = entryForProviderModel(typeof prov === "string" ? prov : "", m, dashData.balances || []);
+            } catch (e) { pid = ""; }
+            if (!pid) pid = modelToPlatform(m);
             if (pid && pid !== selectedId) handleSelect(pid);
           }, [selectedId, dashData.balances]);
 
@@ -3931,12 +3993,15 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
           // 当前 provider: 模型目录优先(切换瞬间就更新), 投影兜底
           const curProvider = modelDirProvider || (cost && cost.currentProvider) || "";
           const [didModelDir, setDidModelDir] = react.useState(false);
+          // v1.9.0: 依赖里加 curProvider —— 只在中转站里换 provider(模型不变)时也要跟着切,
+          // 否则状态条还停在上一个中转站。didModelDir 那道"首帧跳过"保留:
+          // 模型目录第一次给值时往往还是默认模型, 不该覆盖用户上次手动选的平台。
           react.useEffect(() => {
             const m = modelDirModel;
             if (!m) return;
             if (!didModelDir) { setDidModelDir(true); return; }
-            applyModelToPlatform(m);
-          }, [modelDirModel, didModelDir]);
+            applyModelToPlatform(m, curProvider);
+          }, [modelDirModel, didModelDir, curProvider]);
 
           // v0.5.3: 自动联动 — 会话当前模型变化时, 输入框下方平台跟着切换
           // 仅在模型实际变化时触发一次, 用户手动选择的平台不会被后续渲染覆盖
@@ -3945,8 +4010,8 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
             const m = cost && cost.currentModel;
             if (!m || typeof m !== "string" || m === lastLinkedModel) return;
             setLastLinkedModel(m);
-            applyModelToPlatform(m);
-          }, [cost && cost.currentModel]);
+            applyModelToPlatform(m, curProvider);
+          }, [cost && cost.currentModel, curProvider]);
           const currentModel = cost && cost.currentModel;
           const openList = () => setView("list");
           const openDetail = (id) => { setDetailId(id); setView("detail"); };

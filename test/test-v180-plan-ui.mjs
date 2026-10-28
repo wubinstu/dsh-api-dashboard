@@ -44,7 +44,7 @@ const _oldImpHome = process.env.DSH_HOME
 process.env.DSH_HOME = _impHome
 const srv = await import('../src/index.js').catch(() => null)
 if (_oldImpHome === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = _oldImpHome
-const t = (k, vars) => { const zh = { 'plan.unlimited': '不限量', 'plan.left': '剩 {p}%', 'plan.used': '已用 {p}%', 'plan.usedM': '用 {n}M', 'plan.title': 'Step Plan 订阅套餐', 'plan.none': '该 Key 暂无订阅套餐', 'plan.unavailable': '套餐用量暂不可查（{r}）', 'plan.unlimitedLeft': '不限量', 'plan.credits': '{n}M credits', 'plan.resetAt': '{t} 重置', 'plan.expiresAt': '{d} 到期', 'plan.fiveHour': '5 小时窗口', 'plan.weekly': '周配额', 'plan.monthly': '月度配额', 'plan.bucketTotal': '套餐总额度', 'plan.bucketSub': '订阅额度', 'plan.bucketTopup': '加油包额度', 'plan.window': '限流窗口', 'plan.bucket': '额度桶', 'plan.remaining': '剩余', 'plan.total': '总额', 'plan.partial': '部分套餐数据缺失，以下为已查到的部分', 'settings.showPlan': '状态条显示套餐用量', 'settings.showPlanHint': '阶跃星辰等订阅套餐平台：在状态条余额后面追加一段套餐用量（如「用 11.22M 剩 22.33%」）。关掉后仍可在看板详情里查看。', 'settings.showCost': '状态条显示本会话消耗', 'settings.showCostHint': '在状态条末尾追加「~¥33.07」这段本会话消耗。默认关闭；关掉后看板详情里仍能看到完整的分模型/分币种消耗。', 'settings.planSafe': '套餐余量阈值百分比(绿)', 'settings.planWarn': '套餐余量阈值百分比(黄)' }
+const t = (k, vars) => { const zh = { 'peak.label': '高峰', 'valley.label': '低谷', 'plan.unlimited': '不限量', 'plan.left': '剩 {p}%', 'plan.used': '已用 {p}%', 'plan.usedM': '用 {n}M', 'plan.title': 'Step Plan 订阅套餐', 'plan.none': '该 Key 暂无订阅套餐', 'plan.unavailable': '套餐用量暂不可查（{r}）', 'plan.unlimitedLeft': '不限量', 'plan.credits': '{n}M credits', 'plan.resetAt': '{t} 重置', 'plan.expiresAt': '{d} 到期', 'plan.fiveHour': '5 小时窗口', 'plan.weekly': '周配额', 'plan.monthly': '月度配额', 'plan.bucketTotal': '套餐总额度', 'plan.bucketSub': '订阅额度', 'plan.bucketTopup': '加油包额度', 'plan.window': '限流窗口', 'plan.bucket': '额度桶', 'plan.remaining': '剩余', 'plan.total': '总额', 'plan.partial': '部分套餐数据缺失，以下为已查到的部分', 'settings.showPlan': '状态条显示套餐用量', 'settings.showPlanHint': '阶跃星辰等订阅套餐平台：在状态条余额后面追加一段套餐用量（如「用 11.22M 剩 22.33%」）。关掉后仍可在看板详情里查看。', 'settings.showCost': '状态条显示本会话消耗', 'settings.showCostHint': '在状态条末尾追加「~¥33.07」这段本会话消耗。默认关闭；关掉后看板详情里仍能看到完整的分模型/分币种消耗。', 'settings.planSafe': '套餐余量阈值百分比(绿)', 'settings.planWarn': '套餐余量阈值百分比(黄)' }
   let s = zh[k] ?? k; if (vars) for (const [k2, v] of Object.entries(vars)) s = s.replace('{' + k2 + '}', String(v)); return s }
 const flatten = n => n && typeof n === 'object' ? [n, ...(n.children || []).flatMap(flatten)] : []
 // 默认夹具带 usedM, 对应「用 11.22M 剩 22.33%」这类两段格式; 窗口族没有 usedM, 只剩百分比段。
@@ -215,12 +215,15 @@ check('G1 真机 bug: 阶跃星辰平台上, 哪怕模型是 deepseek-v4 也不�
   assert.ok(!peakNode(renderBarOn('stepfun', {}, 'deepseek-v4')), '平台不是 deepseek 一律不显示峰谷标记')
   assert.ok(!peakNode(renderBarOn('stepfun', {}, 'deepseek-flash')))
 })
-check('G2 DeepSeek 平台 + v4/flash 模型 → 正常显示 ☀️/🌙', () => {
+check('G2 DeepSeek 平台 + v4/flash 模型 → 正常显示高峰/低谷', () => {
   const peak = peakNode(renderBarOn('deepseek', {}, 'deepseek-v4'))
   assert.ok(peak, 'deepseek 平台 + v4 模型应当显示峰谷标记')
-  assert.equal(peak.children[0], '☀️')
+  // v1.9.0: ☀️🌙 → 汉字「高峰/低谷」(emoji 字体不稳会撑高胶囊, 撑破 22px 对齐)
+  assert.equal(peak.children[0], '高峰')
+  assert.ok(/dshadb_bar_peak peak/.test(peak.props.className), '峰时用 peak 配色(红)')
   const valley = peakNode(renderBarOn('deepseek', {}, 'deepseek-flash', { isPeak: false, isWeekend: false }))
-  assert.equal(valley.children[0], '🌙')
+  assert.equal(valley.children[0], '低谷')
+  assert.ok(/dshadb_bar_peak valley/.test(valley.props.className), '谷时用 valley 配色(绿)')
 })
 check('G3 DeepSeek 平台但模型不走峰谷表(chat/reasoner) → 不显示(v0.5.3 红线不回归)', () => {
   assert.ok(!peakNode(renderBarOn('deepseek', {}, 'deepseek-chat')))
