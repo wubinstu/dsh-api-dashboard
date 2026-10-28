@@ -310,6 +310,131 @@ DSH 启动时会把 profile 的 `dsh.profile.bundles` **逐个 import**，只要
 
 ---
 
+## 五quater、状态条的峰谷标记与状态点（v1.8.1，改这块前必读）
+
+维护者第五轮反馈两条，都是**状态条跟错了对象**：
+
+### ① ☀️/🌙 峰谷标记要按「平台 + 模型」判定，不能用会话投影的标志
+
+原话：「切换到 step5 模型时，用量确实切换到 stepfun 的用量显示，可是后面会多个小尾巴
+太阳/月亮标识，这个应该是 deepseek 的峰谷计价标志，我现在用的 step plan 是没有这个
+峰谷规则的，所以不应该显示这个东西」。
+
+**根因**：`hasPeakInfo` 的第二个条件原来是 `peakValley === true`，而这个 prop 来自
+`cost.peakValley`（服务端 `src/index.js` 按投影状态里的 `state.currentModel` 算）。
+`currentModel` 是**上一条消息**用过的模型 —— 用户从 deepseek 切到 step-5 后，余额瞬间
+跟着切成阶跃星辰（`applyModelToPlatform` 走模型目录 store，是即时信号），但投影要等
+下一条消息才更新 → **窗口期里标志还留在 deepseek 那一档**。v1.6.3 那条注释写的
+「只在当前模型真的走峰谷表时显示」其实没做到。
+
+**定稿**（`client/client.js` 的 `BarReadout`）：
+
+```js
+const hasPeakInfo = typeof config?.isPeak === "boolean" && !!current
+  && current.platform === "deepseek" && isPeakValleyModel(peakModel);
+```
+
+- `current.platform === "deepseek"`：全表只有 DeepSeek 走 `V4_RATES` 峰谷价，平台不是它
+  一律不显示。这一条就够修掉上面那个真机 bug。
+- `isPeakValleyModel(peakModel)`：模型用**模型目录 store 的即时信号**（`modelDirModel`，
+  与 `applyModelToPlatform` 同源），拿不到时才用投影的 `cost.currentModel` 兜底。
+  `deepseek-chat` / `reasoner` 不显示 —— v0.5.3 的红线（它们被劫持进 v4 表会让 output
+  虚高 4.5 倍）不能在 UI 上以另一种方式回归。
+- **取不到模型时不显示**：`isPeakValleyModel("")` 返回 false。少一个装饰标记远好过挂错一个。
+- ⚠️ 前缀表 `PEAK_VALLEY_PREFIXES = ["deepseek-v4", "deepseek-flash"]` 在客户端与服务端
+  `phaseOfModel` **各存一份**，`test/test-bar.mjs` 有跨文件一致性断言（数 `phaseOfModel`
+  里的 `model.startsWith('` 次数 + 逐个比对），只改一边会红。
+  这是**前缀**匹配不是等值：`deepseek-v4-flash-vision-exp` 靠 `deepseek-flash` 前缀收进来。
+
+### ② 删掉状态点，让金额文字本身当状态灯
+
+原话：「把这个状态灯完全删除, 所有厂商都不要显示状态灯了, 反正这个 ￥44.33 这个余额字体
+已经可以显示为绿色/黄色/红色, 所以让余额字体本身成为状态灯即可, 这样是不是更好一点」。
+我按这个做了（金额本来就用同一套配色，6px 圆点是纯冗余；还顺带解决「套餐 chip 夹在
+余额与状态灯中间」—— 没有灯了，plan 自然紧贴余额）。
+
+🔴 **删点必须同时补灰色档**，否则比不删更糟：`getLevel` 对 `no-balance-api` 返回 `nokey`，
+落进 `err` **红**档，而旧实现里点却是**灰**的 —— 两个信号自相矛盾。点没了以后灰色只能由
+文字承担，所以新增 `.dshadb_bar_na`（`var(--dshadb-secondary)`），`amtClass` 改成
+`isNoBalance ? "dshadb_bar_na" : ...`。少了这一条，中转站 / 无余额接口的平台会平白变红。
+
+⚠️ **只删状态条这一处**，另两处的点故意保留：
+- 抽屉列表行自己的点（`dshadb_status_dot`）—— 维护者原话针对的是状态条那颗「跟在余额后面的小绿点」；
+- 设置面板告警通道的点（`alertChannelDot`，`.dshadb_bar_dot_ok/_err`）—— 与余额无关。
+  所以 CSS 里 `.dshadb_bar_dot*` 的规则**不能删**，只是 `.dshadb_bar` 的 flex 选择器里
+  不再列它。
+
+**回归钉子**：`test/test-bar.mjs` 新增 8 条（无 `dotClass` / 抽屉点故意保留 / 金额灰色档 /
+峰谷按平台收口 / 不再用会话 `peakValley` / 前缀表跨文件一致 / `peakModel` 接线 /
+`isPeakValleyModel` 真值表）；`test/test-v180-plan-ui.mjs` 新增渲染级 G1~G8
+（含**真机 bug 复现**：stepfun 平台上哪怕 `peakModel` 是 `deepseek-v4` 也不得出现
+`dshadb_bar_peak` 节点）。
+
+⚠️ **测试里的正则陷阱**：`isPeakValleyModel(peakModel)` 写在正则里必须转义括号
+（`isPeakValleyModel\(peakModel\)`）—— 不转义就是捕获组，匹配的是
+`isPeakValleyModelpeakModel`，断言会**静默失败**（看起来像源码没改）。这次真踩了。
+
+---
+
+## 五quinquies、套餐余量的三色阈值：`planSafeThreshold` 30 / `planWarnThreshold` 10（v1.8.1，改这块前必读）
+
+维护者第六轮反馈：「顺便把阶跃的订阅用量也增加个颜色变化, 按照剩余用量的百分比来, 剩余 >=30%
+为绿色, 否则剩余>=10%为黄色, 否则为红色, 或者把这个弄到设置里的配置项（不过目前只有 stepfun
+有订阅, 配置项放在全局的设置空间里不知道是否合适, 或者抽象为统一接口也许以后会有其他提供商
+有订阅）」。
+
+### 🔴 与余额那对阈值是**两把尺子**，别为了一致去统一
+
+| 字段 | 默认 | 量的是什么 |
+|---|---|---|
+| `safeThreshold` / `warnThreshold` | 50 / 10 | **账户余额**（绝对金额或 %） |
+| `planSafeThreshold` / `planWarnThreshold` | **30 / 10** | **套餐剩余百分比** |
+
+为什么故意不同：订阅额度用完就是真的不能用，比余额更早预警才合理。v1.8.0 让套餐 chip 直接
+复用余额那对，于是「剩 42%」在状态条判绿、在看板详情卡判黄 —— **同一个数字两处两个色**
+（详情卡那处还是另一套硬编码的 `left>50?ok:left>10?warn:err`）。v1.8.1 起两边都走
+`planRowLevel(row, cfg)` / `planLevel(view, cfg)`，同一把尺子。
+
+⚠️ **比较符是 `>=`，`getLevel` 的余额判定仍是 `>`**。维护者按「>=30% 绿」描述，所以
+30.00% 整好落在绿档；余额那边 50 整落在黄档。**别「顺手统一」成一套** —— 两边量纲不同，
+改了会让存量余额配色整体偏移一档。
+
+### 命名为什么是厂商中立的（维护者自己问过「放全局设置里是否合适」）
+
+`planSafeThreshold` / `planWarnThreshold` **不带 `stepfun`**，因为这条链路上没有一处是
+阶跃私有的：视图 `balance.planView`（服务端 `summarizeStepfunPlan` 压出来的中立形状）、
+客户端 `planBarText` / `planLevel` / `planRowLevel` 全是中立的。以后别的平台接订阅时，
+服务端只要再产出一个同形状的 `planView`，这对开关直接复用，**不需要按厂商各加一套字段**。
+「配置项放在全局设置里」因此是对的 —— 它不是「阶跃的设置」，是「订阅套餐的设置」。
+
+⚠️ **告警链路故意不接**：`/api-dashboard/alerts` 与 `checkAlerts` 里的 `safeThreshold`
+只管余额告警，套餐余量至今**不进告警**。要加先想清楚「套餐剩 10% 该不该半夜弹通知」。
+所以源码里 `planSafeThreshold: runtimeConfig.planSafeThreshold` 是 **3 处**
+（`cache.config` / `/config` GET / `savePersistedState`），不是 4 处 —— 测试里就钉 3，
+别看到 `safeThreshold` 有 4 处就把 plan 也补成 4。
+
+### 接线清单（漏一处就是「开关点了没反应」）
+
+- **服务端 `src/index.js`**：`Config` schema 两个字段（`min(0)`，默认 30 / 10）→
+  `NUMBER_FIELDS` 消毒表两条 → `loadPersistedState` 的 `persisted.X ?? config.X ?? 默认`
+  → `cache.config`（随 `/balances` 下发）→ `/config` GET（**C-2 同理由**：冷启动
+  `/balances` 要等 8~10s，不补就会被默认值覆盖）→ POST 受理（非负数校验）→ `savePersistedState`。
+- **客户端 `client/client.js`**：`planSafe/planWarn` state（**初始值直接吃 config**，
+  不是先画 30 再由 effect 改）→ effect 里 `setPlanSafe(config?.planSafeThreshold ?? 30)`
+  → `/config` 回包 `typeof d.planSafeThreshold === "number"` → 设置面板 `dshadb_grid2`
+  `key:"planthresh"` 两个输入框 → `save()` 的 `settleNumber(planSafe, 0, 1e9, 30)` + POST 体
+  → store 初始快照的 `config` 补两个默认值 → i18n 中英成对 4 个 key。
+- **数字输入框铁律照旧**（⑦）：输入期 `numberDraft(v, 3)`（允许空串），失焦
+  `settleNumber(v, 0, 100, 30/10)` 才夹取。**空串回落 30 / 10，绝不是 0** ——
+  `planWarnThreshold = 0` 会让所有套餐永远判红。
+
+**回归钉子**：`test/test-v180-plan-ui.mjs` 的 A2（30/10 语义 + 边界等号
+30→ok / 29.9→warn / 10→warn / 9.9→err / null→null）、A2b（`planRowLevel`）、
+**B8（余额阈值怎么调都不影响套餐 chip —— 红线）**、C6（详情进度条不再硬编码 50/10）、
+H1~H4（输入框默认值与回显 / 输入期与失焦两段式 / save 体与回包 / 服务端 3 处接线）。
+
+---
+
 ## 六、开源发布前待办（2026-09-10 v1.4.0 校准）
 
 ### 🔎 「自动判定」现状（2026-09-10 在本机实测；v1.4.0 补上最后一块短板，被问到时照这个答）

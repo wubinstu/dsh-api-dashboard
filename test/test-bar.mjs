@@ -16,8 +16,9 @@ let captured=null
 globalThis.window.__ModuleLoader__={load({factory}){captured=factory((n)=>{if(n==='react')return react;if(n==='@deepseek-ai/dsh-client-ui-primitives')return {};throw new Error('未知依赖 '+n)})}}
 // Windows: fs 吃 URL 对象; 用 .pathname 会得到 /D:/... → Node 解析成 D:\D:\...(ENOENT)
 let src=readFileSync(new URL('../client/client.js', import.meta.url), 'utf8')
+const srv=readFileSync(new URL('../src/index.js', import.meta.url), 'utf8')
 const marker='    exports.apply = apply;'
-src=src.replace(marker,`    exports.__test = { modelToPlatform, isRelayProvider, barAmountText, buildSubagentRow, formatSessionCost, planLevel, planBarText, planTooltip, planRowLabel };
+src=src.replace(marker,`    exports.__test = { modelToPlatform, isRelayProvider, barAmountText, buildSubagentRow, formatSessionCost, planLevel, planBarText, planTooltip, planRowLabel, isPeakValleyModel };
 `+marker)
 new Function('window','document','navigator','localStorage',src)(globalThis.window,doc,{hardwareConcurrency:8,language:'zh-CN'},globalThis.localStorage)
 const T=captured.__test
@@ -199,7 +200,7 @@ a('没有空属性对象残留(createElement(x, {  }))', !/react\.createElement\
 a('包住胶囊的那层可收缩', /\.dshadb_barrow > span\{[^}]*max-width:100%/.test(src))
 a('状态条本体可收缩', /\.dshadb_bar\{[^}]*max-width:100%[^}]*min-width:0/.test(src))
 a('平台名可截断', /\.dshadb_bar_name\{[^}]*text-overflow:ellipsis/.test(src))
-a('金额/消耗/峰谷保住不缩', /\.dshadb_bar_amount,\.dshadb_bar_cost,\.dshadb_bar_dot,\.dshadb_bar_peak\{[^}]*flex:0 0 auto/.test(src))
+a('金额/消耗/峰谷保住不缩(状态点已删, 不许再回来)', /\.dshadb_bar_amount,\.dshadb_bar_cost,\.dshadb_bar_peak\{[^}]*flex:0 0 auto/.test(src) && !/\.dshadb_bar_amount,\.dshadb_bar_cost,\.dshadb_bar_dot/.test(src))
 a('没给 barrow 加横向滚动(会撞手机壳手势让路规则)', !/\.dshadb_barrow\{[^}]*overflow-x/.test(src))
 // ===== v1.6.6 状态条独占一行 (真机: 跟宿主自带的统计行并排, 右端被屏幕切掉) =====
 // 宿主 uV2eYG_dock 把 composer.dock 槽位的所有贡献者排在同一条 nowrap flex 行里, 于是我们的胶囊
@@ -227,6 +228,51 @@ a('开关关掉时尾巴整体不占位(三元返回 null, 不是空 span)',
 a('设置面板有 showCost 开关文案(中英成对)', /"settings\.showCost"/.test(src))
 a('开关默认值取 false(不是 !== false 那种"默认开"写法)',
   /useState\(config\?\.showSessionCost === true\)/.test(src))
+// ===== v1.8.1 状态条再两改(维护者 2026-10-28 反馈) =====
+// ① 删状态点: 「把这个状态灯完全删除, 所有厂商都不要显示状态灯了…让余额字体本身成为状态灯即可」。
+//    ⚠️ 删点必须同时补灰色档 —— getLevel 对 no-balance-api 返回 nokey(落 err 红档), 而旧实现里
+//    点却是灰的, 两个信号自相矛盾。点没了以后灰色只能由文字承担, 否则中转站平白变红。
+// ② 峰谷标记按「平台 + 模型」判定: 旧条件用会话投影的 cost.peakValley(按上一条消息的模型算),
+//    切模型后有窗口期还是旧值 —— 维护者实测从 deepseek 切到 step-5, 余额已切阶跃星辰, ☀️🌙 还在。
+a('状态条不再渲染状态点(全库没有 dotClass; 有数据态里也没有 dshadb_bar_dot 节点)',
+  !/dotClass/.test(src))
+// ⚠️ 抽屉列表行自己的点(dshadb_status_dot, client.js 的列表行)是**故意保留**的:
+// 维护者原话针对的是状态条那颗「跟在余额后面的小绿点」, 列表行是另一处组件、空间也够。
+// 哪天也要删, 改这一条的断言即可, 别顺手把 alertChannelDot(设置面板告警通道)一起删了。
+a('抽屉列表行的点故意保留(只删状态条那一处)', /dshadb_status_dot/.test(src))
+a('删除状态点后金额文字补了灰色档(no-balance-api / 中转站不再假红)',
+  /isNoBalance \? "dshadb_bar_na"/.test(src) && /\.dshadb_bar_na\{color:/.test(src))
+a('告警通道的小圆点仍用 dshadb_bar_dot(只删状态条那一处, 设置面板要留)',
+  /dshadb_bar_dot_ok/.test(src))
+a('峰谷标记按当前平台收口: 平台不是 deepseek 一律不显示',
+  /current\.platform === "deepseek" && isPeakValleyModel\(peakModel\)/.test(src))
+a('峰谷标记不再用会话投影的 peakValley(切模型会滞后)',
+  !/hasPeakInfo = typeof config\?\.isPeak === "boolean" && peakValley === true/.test(src))
+a('峰谷模型前缀表与 src/index.js 的 phaseOfModel 一致(改一边会红)',
+  (() => {
+    const cliPart = src.split('PEAK_VALLEY_PREFIXES = [')[1]
+    if (!cliPart) return false
+    const list = cliPart.split(']')[0].split(',').map(s => s.trim().replace(/"/g, ''))
+    if (list.length !== 2) return false
+    const at = srv.indexOf('phaseOfModel = (model')
+    if (at < 0) return false
+    const cond = srv.slice(at, at + 700)
+    // phaseOfModel 里应当恰好两处前缀判定, 且与客户端列表逐个对得上
+    return cond.split("model.startsWith('").length - 1 === 2
+      && list.every(p => cond.includes("model.startsWith('" + p + "')"))
+  })())
+a('状态条传给 BarReadout 的是 peakModel, 不是旧的 peakValley',
+  /peakModel: modelDirModel \|\| \(cost && cost\.currentModel\) \|\| ""/.test(src))
+// isPeakValleyModel 真值表(不只是正则): 前缀匹配, deepseek-v4-flash-vision-exp 与 deepseek-flash 同价
+a('isPeakValleyModel: deepseek-v4 / deepseek-flash 系为 true',
+  T.isPeakValleyModel('deepseek-v4-pro') === true && T.isPeakValleyModel('deepseek-flash') === true
+  && T.isPeakValleyModel('deepseek-v4-flash-vision-exp') === true && T.isPeakValleyModel('DEEPSEEK-Flash') === true)
+a('isPeakValleyModel: deepseek-chat/reasoner/r1 与其它厂商为 false',
+  T.isPeakValleyModel('deepseek-chat') === false && T.isPeakValleyModel('deepseek-reasoner') === false
+  && T.isPeakValleyModel('step-5-preview') === false && T.isPeakValleyModel('glm-5.3') === false
+  && T.isPeakValleyModel('claude-opus-5') === false)
+a('isPeakValleyModel: 空/非字符串一律 false(取不到模型时不显示, 少一个装饰好过挂错一个)',
+  T.isPeakValleyModel('') === false && T.isPeakValleyModel(undefined) === false && T.isPeakValleyModel(null) === false)
 
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`)
 // v1.3.2: 断言失败时以非 0 退出, 否则 CI(GitHub Actions)拦不住回归 —— 原来一律 exit 0

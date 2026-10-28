@@ -545,6 +545,9 @@ const NUMBER_FIELDS = [
   ['timeoutMs', 1000, 60000],
   ['safeThreshold', 0, Number.MAX_SAFE_INTEGER],
   ['warnThreshold', 0, Number.MAX_SAFE_INTEGER],
+  // v1.8.1: 订阅套餐余量阈值 (默认 30/10, 与余额的 50/10 故意不同)
+  ['planSafeThreshold', 0, Number.MAX_SAFE_INTEGER],
+  ['planWarnThreshold', 0, Number.MAX_SAFE_INTEGER],
   ['dailyLimit', 0, Number.MAX_SAFE_INTEGER],   // v1.6.2: 今日花销提醒阈值, 0=关闭
   ['alertRepeatHours', 0, ALERT_REPEAT_MAX_HOURS], // v1.6.8: 重复提醒间隔(小时), 0=只在跨档提醒一次
   ['configVersion', 0, Number.MAX_SAFE_INTEGER],
@@ -1751,6 +1754,17 @@ export const Config = Schema.object({
    */
   alertRepeatHours: Schema.number().min(0).max(168).default(6),
   warnThreshold: Schema.number().min(0).default(10),
+  /**
+   * v1.8.1: **订阅套餐**(Step Plan 这类)余量的三色阈值, 与 safeThreshold/warnThreshold 故意是两把尺子:
+   * 上面那两把量的是「账户余额」(绝对金额/百分比), 这两把量的是「套餐剩余百分比」。
+   * 维护者 2026-10-28 明确要求默认 30/10 (余额仍 50/10) —— 订阅额度用完就是真的不能用,
+   * 比余额更早预警才合理, 别为了一致把套餐也拉到 50/10。
+   * ⚠️ 命名不带厂商名 (planSafe/planWarn): 目前只有阶跃星辰有订阅, 但视图 (balance.planView)
+   *   与客户端 planLevel() 都是厂商中立的, 以后别的平台接进来时同一对开关直接复用,
+   *   不需要再加第二套字段。
+   */
+  planSafeThreshold: Schema.number().min(0).default(30),
+  planWarnThreshold: Schema.number().min(0).default(10),
   /** 计价货币 */
   currency: Schema.string().default('CNY'),
   /**
@@ -3468,6 +3482,10 @@ export function apply(ctx, config) {
     // v1.6.8: 重复提醒间隔(小时); 0=关闭。默认 6 小时(真机反馈「只提醒一次太容易漏」)
     alertRepeatHours: clampAlertRepeatHours(persisted.alertRepeatHours ?? config.alertRepeatHours ?? 6),
     warnThreshold: persisted.warnThreshold ?? config.warnThreshold ?? 10,
+    // v1.8.1: 套餐阈值默认 30/10。老状态文件没这两个字段 → 落默认值(数字缺省即默认, 不需迁移)。
+    // ⚠️ 不能写 ?? 链时把余额那对默认值(50/10)抄过来 —— 两把尺子故意不同。
+    planSafeThreshold: persisted.planSafeThreshold ?? config.planSafeThreshold ?? 30,
+    planWarnThreshold: persisted.planWarnThreshold ?? config.planWarnThreshold ?? 10,
     whaleEnabled: persisted.whaleEnabled ?? config.whaleEnabled ?? false,
     showNoBalanceBrands: persisted.showNoBalanceBrands ?? config.showNoBalanceBrands ?? false,
     showSubagentCapsules: typeof persisted.showSubagentCapsules === 'boolean' ? persisted.showSubagentCapsules : config.showSubagentCapsules ?? true,
@@ -3655,6 +3673,9 @@ export function apply(ctx, config) {
           clientPollIntervalMs: runtimeConfig.clientPollIntervalMs,
           safeThreshold: runtimeConfig.safeThreshold,
           warnThreshold: runtimeConfig.warnThreshold,
+          // v1.8.1: 套餐余量三色阈值 (客户端 planLevel 读它给状态条 chip / 详情进度条上色)
+          planSafeThreshold: runtimeConfig.planSafeThreshold,
+          planWarnThreshold: runtimeConfig.planWarnThreshold,
           currency: runtimeConfig.currency,
           overseasCurrency: runtimeConfig.overseasCurrency,
           isPeak: isPeakTime(),
@@ -4044,6 +4065,11 @@ export function apply(ctx, config) {
             // 用户一点"保存并生效"就把自己存的阈值覆盖掉了。补上。
             safeThreshold: runtimeConfig.safeThreshold,
             warnThreshold: runtimeConfig.warnThreshold,
+            // v1.8.1: 套餐阈值也要从 /config 下发 —— 同 C-2 (v1.4.1) 的理由:
+            // 冷启动 /balances 可能要等 8~10s, 那期间打开设置面板只能看到默认值,
+            // 一点「保存并生效」就把用户自己调的套餐阈值覆盖回 30/10。
+            planSafeThreshold: runtimeConfig.planSafeThreshold,
+            planWarnThreshold: runtimeConfig.planWarnThreshold,
             dailyLimit: runtimeConfig.dailyLimit,
             alertRepeatHours: runtimeConfig.alertRepeatHours,
             overseasCurrency: runtimeConfig.overseasCurrency,
@@ -4121,6 +4147,9 @@ export function apply(ctx, config) {
             // v1.6.8: 重复提醒间隔(小时); 0 = 关闭。脏值走 clampAlertRepeatHours 一律落 0, 别进状态文件
             if (body.alertRepeatHours !== undefined) runtimeConfig.alertRepeatHours = clampAlertRepeatHours(body.alertRepeatHours)
             if (typeof body.warnThreshold === 'number' && body.warnThreshold >= 0) runtimeConfig.warnThreshold = body.warnThreshold
+            // v1.8.1: 套餐余量阈值 (与余额阈值同一套校验: 非负数, 脏值不进状态文件)
+            if (typeof body.planSafeThreshold === 'number' && body.planSafeThreshold >= 0) runtimeConfig.planSafeThreshold = body.planSafeThreshold
+            if (typeof body.planWarnThreshold === 'number' && body.planWarnThreshold >= 0) runtimeConfig.planWarnThreshold = body.planWarnThreshold
             if (typeof body.currency === 'string' && body.currency.trim()) runtimeConfig.currency = body.currency.trim().toUpperCase()
             // v1.3.2: 海外模型独立计价货币, 只接受白名单三值 (脏值一律落回 follow, 不放行任意字符串)
             if (typeof body.overseasCurrency === 'string') {
@@ -4155,6 +4184,8 @@ export function apply(ctx, config) {
               overseasCurrency: runtimeConfig.overseasCurrency,
               safeThreshold: runtimeConfig.safeThreshold,
               warnThreshold: runtimeConfig.warnThreshold,
+              planSafeThreshold: runtimeConfig.planSafeThreshold,
+              planWarnThreshold: runtimeConfig.planWarnThreshold,
               dailyLimit: runtimeConfig.dailyLimit,
               alertRepeatHours: runtimeConfig.alertRepeatHours,
               whaleEnabled: runtimeConfig.whaleEnabled,

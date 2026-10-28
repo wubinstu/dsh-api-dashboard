@@ -289,10 +289,12 @@ window.__ModuleLoader__.load({
 .dshadb_bar_name{font-weight:700;color:var(--dshadb-text,#17181c);font-size:11px}
 .dshadb_bar_amount{font-weight:800;font-variant-numeric:tabular-nums;color:var(--dshadb-text,#17181c)}
 /* C-4a (v1.4.1): .dshadb_bar_ok/warn/err 以前只有使用处、没有 CSS 规则(死类名),
-   于是"负余额/低余额金额变红"从来没生效过, 只有小圆点变色。 */
+   于是"负余额/低余额金额变红"从来没生效过, 只有小圆点变色。
+   v1.8.1: 补 .dshadb_bar_na(查不到余额的灰色档) —— 状态点删除后, 灰色只能由文字承担。 */
 .dshadb_bar_ok{color:#2e9e5b}
 .dshadb_bar_warn{color:#c8891a}
 .dshadb_bar_err{color:#d8443f}
+.dshadb_bar_na{color:var(--dshadb-secondary,#9ca0aa)}
 .dshadb_bar_dot{width:6px;height:6px;border-radius:50%;flex:none}
 .dshadb_bar_dot_ok{background:#35b56b}
 .dshadb_bar_dot_warn{background:#e6a72f}
@@ -617,7 +619,7 @@ body:has(.dshadb_scrim) [class*="sidebarCol"]{border-right-color:transparent !im
 [data-slot="conversation.composer.dock"] > [data-composer-stats]{flex:0 0 100%}
 .dshadb_bar{max-width:100%;min-width:0}
 .dshadb_bar_name{overflow:hidden;text-overflow:ellipsis;min-width:0}
-.dshadb_bar_amount,.dshadb_bar_cost,.dshadb_bar_dot,.dshadb_bar_peak{flex:0 0 auto}
+.dshadb_bar_amount,.dshadb_bar_cost,.dshadb_bar_peak{flex:0 0 auto}
 .dshadb_subs{display:flex;flex-wrap:nowrap;align-items:center;gap:4px;margin:3px 0 0 0;max-width:100%;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-ms-overflow-style:none;-webkit-overflow-scrolling:touch}
 /* UI v1.4.1: 子代理行只在**真的溢出**时右侧渐隐(由 syncSubsOverflow 打类名),
    这样"被切一半"看起来是有意的可滑动提示, 而不是被屏幕齐口截断。 */
@@ -764,6 +766,10 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
       "settings.overseasCurrency": "海外模型计价", "settings.overseasFollow": "跟随主货币", "settings.overseasHint": "海外厂商官方价本就是美元, 选美元可免去 ×7 折算误差",
       "settings.safeHint": "余额高于此值显示绿色(安全)",
       "settings.warnHint": "余额低于此值显示黄色(偏低)，再低显示红",
+      "settings.planSafe": "套餐余量阈值(绿)",
+      "settings.planWarn": "套餐余量阈值(黄)",
+      "settings.planSafeHint": "订阅套餐剩余百分比不低于此值显示绿色。默认 30，与余额阈值是两把尺子",
+      "settings.planWarnHint": "低于此值显示黄色(偏低)，再低显示红。默认 10",
       "settings.refresh": "刷新间隔(秒)", "settings.refreshHint": "1~60 秒，最高一分钟",
       "settings.save": "保存并生效", "settings.saved": "已保存",
       "update.title": "版本与更新", "update.current": "当前版本",
@@ -885,6 +891,9 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
       "settings.safeHint": "Above this = green (safe)",
       "settings.warnHint": "Below this = yellow, lower = red",
       "settings.refresh": "Refresh (sec)", "settings.refreshHint": "1-60s, max one minute",
+      "settings.planSafe": "Plan left (green)", "settings.planWarn": "Plan left (yellow)",
+      "settings.planSafeHint": "Subscription quota left at or above this = green. Default 30; a separate ruler from the balance thresholds.",
+      "settings.planWarnHint": "Below this = yellow (low), lower = red. Default 10.",
       "settings.save": "Save", "settings.saved": "Saved",
       "update.title": "Version & Updates", "update.current": "Current",
       "update.check": "Check updates", "update.checking": "Checking…",
@@ -982,7 +991,7 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
 
     //#region store (单例轮询器)
     const DEFAULT_POLL_MS = 30000;
-    let snapshot = { status: "loading", balances: [], config: { safeThreshold: 50, warnThreshold: 10 } };
+    let snapshot = { status: "loading", balances: [], config: { safeThreshold: 50, warnThreshold: 10, planSafeThreshold: 30, planWarnThreshold: 10 } };
     const listeners = new Set();
     let timer = null, pollMs = DEFAULT_POLL_MS, inflight = null, started = false;
     let lastForceAt = 0, seq = 0, appliedSeq = 0;
@@ -1341,7 +1350,13 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
     /** 四舍五入到两位小数再 toFixed。toFixed 自身按二进制浮点就近取舍 (2.675 → "2.67"),
      *  先 half-up 抹平这层误差, 显示值才跟手算一致 —— 与 stepcode footer 的 roundHalfUp2 同一算法。 */
     function roundHalfUp2(n) { return (Math.sign(n) * Math.floor(Math.abs(n) * 100 + 0.5)) / 100; }
-    /** 主显示档位: 与 getLevel 同一把尺子 (剩余% > safe 绿, > warn 黄, 否则红) */
+    /** 主显示档位: 套餐余量自己的阈值对 (v1.8.1 起 planSafe/planWarn, 默认 30/10)
+     *  为什么不再跟 getLevel 共用 safeThreshold/warnThreshold: 那两把量的是**账户余额**
+     *  (默认 50/10), 而这里量的是**套餐剩余百分比**。维护者 2026-10-28 明确要求
+     *  「剩余 >=30% 绿, >=10% 黄, 否则红」—— 订阅额度用完就是真不能用, 要比余额更早预警。
+     *  ⚠️ 边界取**等号**(与 getLevel 的 > 不同): 用户按 >= 口径描述, 且百分比型判等更直觉。
+     *  ⚠️ 字段名不带厂商名: 视图(planView)与这个函数都是厂商中立的, 别的平台接入订阅时
+     *    同一对阈值直接复用, 不需要再加第二套配置。 */
     function planLevel(view, cfg) {
       if (!view) return null;
       const p = view.primary;
@@ -1349,12 +1364,24 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
       if (p.unlimited) return "ok";
       const v = planPct(p.leftPercent);
       if (v === null) return null;
-      const safe = cfg?.safeThreshold ?? 50;
-      const warn = cfg?.warnThreshold ?? 10;
-      return v > safe ? "ok" : v > warn ? "warn" : "err";
+      return planLevelOf(v, cfg);
     }
-    /** 状态条上的那一小块: { text, title, level } | null (没数据就不占位) */
-    function planBarText(view, t) {
+    /** 单个「剩余百分比」→ 三色档位 (套餐专用尺子, 主显示与详情进度条共用, 保证同色) */
+    function planLevelOf(v, cfg) {
+      if (!(typeof v === "number") || !Number.isFinite(v)) return null;
+      const safe = cfg?.planSafeThreshold ?? 30;
+      const warn = cfg?.planWarnThreshold ?? 10;
+      return v >= safe ? "ok" : v >= warn ? "warn" : "err";
+    }
+    /** 详情卡里一行(窗口/额度桶)的档位: 与 planLevel 同一把尺子 (v1.8.1 前是硬编码 50/10) */
+    function planRowLevel(row, cfg) {
+      if (!row) return null;
+      if (row.unlimited) return "ok";
+      return planLevelOf(planPct(row.leftPercent), cfg);
+    }
+    /** 状态条上的那一小块: { text, title, level } | null (没数据就不占位)
+     *  cfg = 轮询快照里的 config (阈值来源; 缺省即 30/10, 见 planLevelOf) */
+    function planBarText(view, t, cfg) {
       if (!view) return null;
       if (view.kind === "none") return null;       // 无套餐 → 不在状态条显示, 详情里说明
       if (view.kind === "unavailable") return null; // 查不了 → 同上, 别把接口异常塞进状态条
@@ -1372,7 +1399,7 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
         // 「查不到」和「真的不限量」是两件事, 别把前者伪装成后者(红线)。
         if (left2 !== null) parts.push(t("plan.left", { p: left2 }));
       }
-      return { text: parts.length ? parts.join(" ") : "—", title: planTooltip(view, t), level: planLevel(view) };
+      return { text: parts.length ? parts.join(" ") : "—", title: planTooltip(view, t), level: planLevel(view, cfg) };
     }
     /** 浮层/标题用的多行说明 (桌面端 title 能显示, 手机端长按走详情页) */
     function planTooltip(view, t) {
@@ -1462,6 +1489,18 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
       if (/grok/.test(m)) return "xai";
       return "";
     }
+
+    // v1.8.1: 走 V4 峰谷价的模型前缀。必须与 src/index.js 的 phaseOfModel 保持一致
+    // —— test-bar.mjs 有跨文件一致性断言, 只改一边会红。
+    // ⚠️ 这是**前缀**匹配不是等值: deepseek-v4-flash-vision-exp 与 deepseek-flash 同价,
+    // 靠 deepseek-flash 前缀把它收进来。
+    const PEAK_VALLEY_PREFIXES = ["deepseek-v4", "deepseek-flash"];
+    function isPeakValleyModel(model) {
+      if (typeof model !== "string" || model === "") return false;
+      const m = model.toLowerCase();
+      for (const p of PEAK_VALLEY_PREFIXES) if (m.startsWith(p)) return true;
+      return false;
+    }
     /** 三色等级: 百分比型(套餐剩余%)用安全/预警阈值; 真实货币金额无百分比语义, 一律 ok
      *  v0.5.6 修复: 旧逻辑把 ¥2.55 这类绝对金额跟 50/10 的百分比阈值比较, 导致显示「异常」 */
     function getLevel(b, cfg) {
@@ -1546,7 +1585,7 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
 
 
     //#region 一层 bar
-    function BarReadout({ t, onOpen, onOpenSettings, selectedId, onSelect, config, cost, provider, peakValley }) {
+    function BarReadout({ t, onOpen, onOpenSettings, selectedId, onSelect, config, cost, provider, peakModel }) {
       const data = react.useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
       const balances = data.balances || [];
       let current = balances.find(b => b.platform === selectedId);
@@ -1587,7 +1626,14 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
       // v1.6.3: 峰谷标记只在**当前模型真的走峰谷表**时显示。
       // 旧写法只判 config.isPeak —— 那是个恒真的全局时段布尔, 于是 glm/claude 这类
       // 没有峰谷价的模型也被挂上 ☀️🌙, 用户会以为它们也有峰谷折扣(维护者实测反馈)。
-      const hasPeakInfo = typeof config?.isPeak === "boolean" && peakValley === true;
+      // v1.8.1: 再按**状态条正在展示的那个平台**收口。原来第二个条件是会话投影的
+      // cost.peakValley(按上一条消息用过的模型算), 切模型后有窗口期还是旧值 —— 维护者
+      // 2026-10-28 实测: 从 deepseek 切到 step-5, 余额已经跟着切成阶跃星辰(Step Plan
+      // 根本没有峰谷规则), ☀️🌙 却还挂在尾巴上。现在平台不是 deepseek 一律不显示;
+      // 模型改用模型目录的即时信号(与 applyModelToPlatform 同源), 不再等投影。
+      // ⚠️ 取不到模型时 isPeakValleyModel("") 返回 false → 不显示。这是故意的:
+      // 少一个装饰标记远好过挂错一个。
+      const hasPeakInfo = typeof config?.isPeak === "boolean" && !!current && current.platform === "deepseek" && isPeakValleyModel(peakModel);
       const isPeak = config?.isPeak === true;
       const isWknd = config?.isWeekend === true;
 
@@ -1625,11 +1671,18 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
 
       const meta = metaFor(current.platform), level = getLevel(current, config);
       const isNoBalance = viaRelay || (current && current.status === "no-balance-api");
-      const dotClass = "dshadb_bar_dot" + (isNoBalance ? "" : " " + (level === "ok" ? "dshadb_bar_dot_ok" : level === "warn" ? "dshadb_bar_dot_warn" : "dshadb_bar_dot_err"));
-      const dotStyle = isNoBalance ? { background: "#c7c7cc" } : undefined;
-      const amtClass = "dshadb_bar_amount " + (level === "ok" ? "dshadb_bar_ok" : level === "warn" ? "dshadb_bar_warn" : "dshadb_bar_err");
+      // v1.8.1: 删掉状态点, 让金额文字本身当状态灯 —— 维护者 2026-10-28 要求
+      // 「把这个状态灯完全删除, 所有厂商都不要显示状态灯了, 反正这个 ¥44.33 余额字体
+      // 已经可以显示为绿色/黄色/红色, 让余额字体本身成为状态灯即可」。金额本来就用
+      // 同一套配色, 那个 6px 圆点是纯冗余; 删掉还顺带解决了 plan chip 夹在余额与
+      // 状态灯中间的问题(没有灯了, plan 自然紧贴余额)。
+      // ⚠️ 删点必须同时补上「查不到余额」的灰色档: 旧实现里点是灰的、文字却是红的
+      // (getLevel 对 no-balance-api 返回 nokey, 落进 err 档), 两个信号自相矛盾。
+      // 点没了之后灰色只能由文字承担, 否则中转站/无余额接口的平台会平白变红。
+      const amtClass = "dshadb_bar_amount " + (isNoBalance ? "dshadb_bar_na" : level === "ok" ? "dshadb_bar_ok" : level === "warn" ? "dshadb_bar_warn" : "dshadb_bar_err");
       // v1.8.0: Step Plan 套餐余量 (阶跃星辰订阅套餐)。没套餐/查不到 → null → 不占位。
-      const plan = config?.showPlan === false ? null : planBarText(current.planView, t);
+      // v1.8.1: cfg 传下去 —— 档位要用套餐自己的阈值对(默认 30/10), 不是余额那对 50/10。
+      const plan = config?.showPlan === false ? null : planBarText(current.planView, t, config);
       const planNode = plan ? react.createElement("span", {
         className: "dshadb_bar_plan " + (plan.level === "ok" ? "dshadb_bar_ok" : plan.level === "warn" ? "dshadb_bar_warn" : "dshadb_bar_err"),
         title: plan.title, key: "plan",
@@ -1644,7 +1697,6 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
           react.createElement("span", { className: "dshadb_bar_name", key: "name" }, meta.name),
           react.createElement("span", { className: amtClass, key: "amount" }, displayAmount),
           planNode,
-          react.createElement("span", { className: dotClass, style: dotStyle, key: "dot" }),
           peakNode,
           // v1.8.0: 「本会话消耗」尾巴改成开关, 默认关 —— 维护者 2026-10-27 反馈
           // 「最后面显示的 ~¥47.27 这个尾巴…这个组件删除掉, 要不然就是配置成一个开关」。
@@ -2028,6 +2080,9 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
           const left = r.unlimited ? null : planPct(r.leftPercent);
           const left2 = r.unlimited ? null : planPct2(r.leftPercent);
           const barW = left === null ? 100 : Math.max(0, Math.min(100, left));
+          // v1.8.1: 进度条色也要走套餐阈值(默认 30/10) —— 之前这里硬编码 left>50/left>10,
+          // 与状态条 chip 的颜色会不一致(同一个 42% 在状态条是黄、在详情是绿)。
+          const rowLvl = planRowLevel(r, config);
           const detail = [];
           if (r.totalM != null) detail.push(t("plan.remaining") + " " + t("plan.credits", { n: roundHalfUp2(r.remainingM ?? 0).toFixed(2) }) + " / " + t("plan.credits", { n: roundHalfUp2(r.totalM).toFixed(2) }));
           if (r.resetsAt) detail.push(t("plan.resetAt", { t: new Date(r.resetsAt).toLocaleString() }));
@@ -2038,7 +2093,7 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
               react.createElement("span", { className: "dshadb_planrow_val", key: "v" }, r.unlimited ? t("plan.unlimitedLeft") : (left2 === null ? "—" : t("plan.left", { p: left2 }))),
             ]),
             react.createElement("div", { className: "dshadb_planbar", key: "b" }, [
-              react.createElement("div", { className: "dshadb_planbar_fill " + (left === null ? "is_unknown" : left > 50 ? "is_ok" : left > 10 ? "is_warn" : "is_err"), style: { width: barW + "%" }, key: "f" }),
+              react.createElement("div", { className: "dshadb_planbar_fill " + (left === null ? "is_unknown" : rowLvl === "ok" ? "is_ok" : rowLvl === "warn" ? "is_warn" : "is_err"), style: { width: barW + "%" }, key: "f" }),
             ]),
             detail.length ? react.createElement("div", { className: "dshadb_planrow_sub", key: "s" }, detail.join(" · ")) : null,
           ]);
@@ -2207,6 +2262,12 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
       const [models, setModels] = react.useState([]);
       const [safe, setSafe] = react.useState(50);
       const [warn, setWarn] = react.useState(10);
+      // v1.8.1: 订阅套餐余量阈值 —— 与上面那对**故意不同**(默认 30/10)。
+      // 放在全局设置里是因为 planView 视图与 planLevel() 都是厂商中立的: 目前只有阶跃星辰
+      // 有订阅, 别的平台接进来时用的是同一对字段, 不会变成「按厂商各一套」。
+      // 初始值直接吃 config(不是先画 30 再由 effect 改) —— 免得打开面板那一帧闪一下默认值。
+      const [planSafe, setPlanSafe] = react.useState(config?.planSafeThreshold ?? 30);
+      const [planWarn, setPlanWarn] = react.useState(config?.planWarnThreshold ?? 10);
       /** v1.6.2: 今日花销提醒阈值(主币种)。0 = 关闭。超了就弹一次「老大，今天花销已经超过 ¥# 啦」。 */
       const [dailyLimit, setDailyLimit] = react.useState(0);
       // v1.6.8: 重复提醒间隔(小时), 0 = 只在跨档时提醒一次
@@ -2338,6 +2399,8 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
         setDailyLimit(Number(config?.dailyLimit) > 0 ? Number(config.dailyLimit) : 0);
         setAlertRepeat(Number(config?.alertRepeatHours) > 0 ? Number(config.alertRepeatHours) : 0);
         setWarn(config?.warnThreshold ?? 10);
+        setPlanSafe(config?.planSafeThreshold ?? 30);
+        setPlanWarn(config?.planWarnThreshold ?? 10);
         setCurrency(config?.currency ?? "CNY");
         setOverseasCurrency(config?.overseasCurrency ?? "follow");
         setRefreshSec(Math.round((config?.clientPollIntervalMs || 5000) / 1000) || 5);
@@ -2354,6 +2417,9 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
             // 那期间打开面板看到的是默认 50/10/CNY, 一点"保存并生效"就把用户真实配置覆盖了。
             if (typeof d.safeThreshold === "number") setSafe(d.safeThreshold);
             if (typeof d.warnThreshold === "number") setWarn(d.warnThreshold);
+            // v1.8.1: 同上, 冷启动那几秒不能拿默认 30/10 覆盖用户调过的值
+            if (typeof d.planSafeThreshold === "number") setPlanSafe(d.planSafeThreshold);
+            if (typeof d.planWarnThreshold === "number") setPlanWarn(d.planWarnThreshold);
             if (typeof d.dailyLimit === "number") setDailyLimit(d.dailyLimit > 0 ? d.dailyLimit : 0);
             if (typeof d.alertRepeatHours === "number") setAlertRepeat(d.alertRepeatHours > 0 ? d.alertRepeatHours : 0);
             if (typeof d.currency === "string") setCurrency(d.currency);
@@ -2465,11 +2531,17 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
         setSafe(nextSafe)
         const nextWarn = settleNumber(warn, 0, 1e9, 10)
         setWarn(nextWarn)
+        // v1.8.1: 套餐阈值空串回落 30/10 (不是 0! 0 会把套餐永远判成红色)
+        const nextPlanSafe = settleNumber(planSafe, 0, 1e9, 30)
+        setPlanSafe(nextPlanSafe)
+        const nextPlanWarn = settleNumber(planWarn, 0, 1e9, 10)
+        setPlanWarn(nextPlanWarn)
         setSaving(true);
         try {
           await fetchT("/api-dashboard/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
             customRelays: relays, customModels: models,
             safeThreshold: nextSafe, warnThreshold: nextWarn, currency, overseasCurrency,
+            planSafeThreshold: nextPlanSafe, planWarnThreshold: nextPlanWarn,
             dailyLimit: nextDailyLimit,
             alertRepeatHours: nextAlertRepeat,
             refreshIntervalSec: nextRefreshSec,
@@ -2621,6 +2693,22 @@ body[data-dshadb-theme="dark"],body[data-ds-dark-theme]{--dshadb-panel:#202329;-
             react.createElement("label", { className: "dshadb_label", key: "l2" }, t("settings.warn")),
             react.createElement("input", { className: "dshadb_field", type: "number", value: warn, onChange: (e) => setWarn(e.target.value), onBlur: (e) => setWarn(settleNumber(e.target.value, 0, 1e9, 10)), key: "i2" }),
             react.createElement("span", { style: { fontSize: "10px", color: "var(--dsw-alias-label-tertiary)" }, key: "h2" }, t("settings.warnHint")),
+          ]),
+        ]),
+        // v1.8.1: 订阅套餐(Step Plan)余量的三色阈值 —— 与上面余额那对是两把尺子(默认 30/10)。
+        // 维护者 2026-10-28: 「剩余 >=30% 为绿色, 否则剩余>=10%为黄色, 否则为红色」。
+        // 放在全局而不是按厂商分: planView 视图与 planLevel() 都厂商中立, 以后别的平台
+        // 有订阅时复用同一对字段(见 AGENTS.md 五quater)。
+        react.createElement("div", { className: "dshadb_grid2", key: "planthresh" }, [
+          react.createElement("div", { key: "psafe" }, [
+            react.createElement("label", { className: "dshadb_label", key: "l1" }, t("settings.planSafe")),
+            react.createElement("input", { className: "dshadb_field", type: "number", min: 0, max: 100, step: 1, value: planSafe, onChange: (e) => setPlanSafe(numberDraft(e.target.value, 3)), onBlur: (e) => setPlanSafe(settleNumber(e.target.value, 0, 100, 30)), key: "i1" }),
+            react.createElement("span", { style: { fontSize: "10px", color: "var(--dsw-alias-label-tertiary)" }, key: "h1" }, t("settings.planSafeHint")),
+          ]),
+          react.createElement("div", { key: "pwarn" }, [
+            react.createElement("label", { className: "dshadb_label", key: "l2" }, t("settings.planWarn")),
+            react.createElement("input", { className: "dshadb_field", type: "number", min: 0, max: 100, step: 1, value: planWarn, onChange: (e) => setPlanWarn(numberDraft(e.target.value, 3)), onBlur: (e) => setPlanWarn(settleNumber(e.target.value, 0, 100, 10)), key: "i2" }),
+            react.createElement("span", { style: { fontSize: "10px", color: "var(--dsw-alias-label-tertiary)" }, key: "h2" }, t("settings.planWarnHint")),
           ]),
         ]),
         react.createElement("div", { className: "dshadb_grid2", key: "misc" }, [
@@ -3892,7 +3980,10 @@ const openSettings = (section) => { setSettingsSection(section || "basic"); setS
             react.createElement("span", { className: "dshadb_barrow", key: "row" }, [
               // v0.5.7: 本会话消耗并入同一个胶囊, 不再裸露在外
               react.createElement(BarReadout, { t, onOpen: openList, onOpenSettings: (sec) => openSettings(typeof sec === "string" ? sec : "basic"), selectedId, onSelect: handleSelect, config, cost: costDisp, provider: curProvider,
-              peakValley: !!(cost && cost.peakValley), key: "bar" }),
+              // v1.8.1: 峰谷标记按**输入框里当前选中的模型**算 —— 模型目录 store 是即时信号
+              // (与 applyModelToPlatform 同源, 切模型瞬间就更新), 投影的 cost.currentModel
+              // 是上一条消息用过的模型、有窗口期。目录还没建起来时用投影兜底。
+              peakModel: modelDirModel || (cost && cost.currentModel) || "", key: "bar" }),
               view === "list" ? react.createElement(DashboardDrawer, { isOpen: true, onClose: closeList, t, selectedId, onSelect: handleSelect, onOpenDetail: (id) => { setDetailId(id); setView("detail"); }, onAddRelay: () => openSettings("relays"), onAddCustom: () => openSettings("models"), onOpenSettings: (sec) => openSettings(typeof sec === "string" ? sec : "basic"), config, currentModel, subagentCost: cost,
               today: (cost && cost.todayTokens) ? { tokens: cost.todayTokens, byCurrency: cost.todayByCurrency || {}, byModel: cost.todayByModel || {} } : null,
               key: "drawer" }) : null,

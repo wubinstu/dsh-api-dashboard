@@ -191,8 +191,8 @@ a('#8 挂件同步依赖用 JSON 串(投影 view 每次刷新都是新引用)',
   a('#10 非峰谷模型 peakValley=false (glm / claude)',
     g.view.peakValley === false && c.view.peakValley === false)
   a('#10 峰谷模型 peakValley=true (deepseek)', d.view.peakValley === true)
-  a('#10 状态条按 peakValley 决定显示, 不再只看 config.isPeak',
-    /hasPeakInfo = typeof config\?\.isPeak === "boolean" && peakValley === true/.test(cli))
+  a('#10 状态条按「平台 + 模型」决定显示峰谷标记, 不再只看 config.isPeak',
+    /hasPeakInfo = typeof config\?\.isPeak === "boolean" && !!current && current\.platform === "deepseek" && isPeakValleyModel\(peakModel\)/.test(cli))
 }
 // ===== ⑪ 法定节假日全天算谷时 (维护者问的) =====
 {
